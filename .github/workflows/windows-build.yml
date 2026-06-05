@@ -1,0 +1,70 @@
+name: windows-build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: 'x64'
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller
+
+      - name: Verify source compiles
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "$PWD\src"
+          python -m compileall src
+
+      - name: Verify CLI help
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "$PWD\src"
+          python -m win_connector.cli --help
+          python -m win_connector.cli gui --help
+          python -m win_connector.cli execute --help
+          python -m win_connector.cli test --help
+          python -m win_connector.cli tasks --help
+
+      - name: Build Windows GUI package
+        shell: pwsh
+        run: |
+          .\scripts\build_windows.ps1
+
+      - name: Verify packaged executable exists
+        shell: pwsh
+        run: |
+          if (-not (Test-Path .\dist\WinConnector.exe)) {
+            throw 'Expected dist\\WinConnector.exe to exist after PyInstaller build.'
+          }
+
+      - name: Archive build output
+        shell: pwsh
+        run: |
+          Compress-Archive -Path .\dist\WinConnector.exe -DestinationPath .\dist\WinConnector-windows-x86_64.zip -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinConnector-windows-x86_64
+          path: dist/WinConnector-windows-x86_64.zip
+          if-no-files-found: error

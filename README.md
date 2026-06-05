@@ -339,9 +339,9 @@ Copy-Item .\examples\sample_connections.json $env:APPDATA\WinConnector\connectio
 
 ## Windows Packaging
 
-This repository now includes a PyInstaller spec and helper scripts for building a Windows x86_64 GUI package.
+This repository now includes a PyInstaller spec, local helper scripts, and GitHub Actions workflows for building a Windows x86_64 GUI package.
 
-### Windows One-Click Build
+### Local Windows One-Click Build
 
 On Windows x86_64:
 
@@ -378,6 +378,73 @@ Note: the current Linux environment can validate the build script and spec, but 
 pip install pyinstaller
 pyinstaller --clean --noconfirm win_connector.spec
 ```
+
+## GitHub Actions
+
+### 1. Windows 自动构建
+
+仓库已包含：
+
+- `.github/workflows/windows-build.yml`
+
+触发条件：
+- push 到 `main`
+- 对 `main` 发起 PR
+- 手动 `workflow_dispatch`
+
+这个工作流会：
+- 在 `windows-latest` 上使用 Python 3.11 x64
+- 安装依赖与 PyInstaller
+- 执行 `compileall`
+- 验证 CLI 帮助命令
+- 运行 `scripts/build_windows.ps1`
+- 上传 `WinConnector-windows-x86_64.zip` 构建产物
+
+### 2. Release 自动发布
+
+仓库已包含：
+
+- `.github/workflows/release.yml`
+
+触发条件：
+- push tag：`v*`
+- 手动 `workflow_dispatch`
+
+这个工作流会：
+- 在 Windows runner 上构建 GUI 包
+- 自动打包为 zip
+- 创建 GitHub Release
+- 上传 zip 作为 release asset
+
+### 3. 推荐发布流程
+
+#### 自动构建验证
+直接 push 到 `main`，然后在 GitHub Actions 查看 `windows-build`。
+
+#### 正式发版
+本地执行：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+推送 tag 后，`release.yml` 会自动：
+- 构建 Windows x86_64 版本
+- 创建 release
+- 上传产物
+
+## CI / 验证建议
+
+当前最基础的 CI 校验已经覆盖：
+- Python 源码可编译
+- CLI 关键入口可启动
+- Windows 打包链可执行
+
+后续可以继续增强：
+- 增加 API smoke tests
+- 增加任务执行单元测试
+- 增加 GUI 结构性测试（非桌面依赖部分）
 
 ## Architecture
 
