@@ -1,0 +1,92 @@
+[
+  {
+    "id": "linux-demo-001",
+    "name": "Lab Linux SSH",
+    "protocol": "ssh",
+    "group": "lab/linux",
+    "tags": [
+      "linux",
+      "demo"
+    ],
+    "notes": "Example Linux server profile.",
+    "device_template": "linux",
+    "protocol_config": {
+      "protocol": "ssh",
+      "host": "192.168.56.10",
+      "port": 22,
+      "username": "admin",
+      "password": "",
+      "private_key_path": "",
+      "passphrase": "",
+      "timeout_seconds": 10,
+      "open_in_external_terminal": false
+    },
+    "created_at": "2026-06-05T00:00:00+00:00",
+    "updated_at": "2026-06-05T00:00:00+00:00"
+  },
+  {
+    "id": "switch-demo-001",
+    "name": "Cisco Switch Telnet",
+    "protocol": "telnet",
+    "group": "network/switches",
+    "tags": [
+      "cisco",
+      "switch"
+    ],
+    "notes": "Example switch console over telnet.",
+    "device_template": "cisco_ios",
+    "protocol_config": {
+      "protocol": "telnet",
+      "host": "192.168.56.20",
+      "port": 23,
+      "username": "admin",
+      "password": "",
+      "timeout_seconds": 10
+    },
+    "created_at": "2026-06-05T00:00:00+00:00",
+    "updated_at": "2026-06-05T00:00:00+00:00"
+  },
+  {
+    "id": "serial-demo-001",
+    "name": "Serial Console COM3",
+    "protocol": "serial",
+    "group": "oob",
+    "tags": [
+      "serial",
+      "console"
+    ],
+    "notes": "Example serial console.",
+    "device_template": "serial_console",
+    "protocol_config": {
+      "protocol": "serial",
+      "port_name": "COM3",
+      "baudrate": 9600,
+      "bytesize": 8,
+      "parity": "N",
+      "stopbits": 1,
+      "timeout_seconds": 1.0
+    },
+    "created_at": "2026-06-05T00:00:00+00:00",
+    "updated_at": "2026-06-05T00:00:00+00:00"
+  },
+  {
+    "id": "rdp-demo-001",
+    "name": "Windows RDP",
+    "protocol": "rdp",
+    "group": "windows",
+    "tags": [
+      "rdp"
+    ],
+    "notes": "Example RDP profile.",
+    "device_template": "firewall_generic",
+    "protocol_config": {
+      "protocol": "rdp",
+      "host": "192.168.56.30",
+      "port": 3389,
+      "username": "administrator",
+      "screen_mode": "windowed"
+    },
+    "created_at": "2026-06-05T00:00:00+00:00",
+    "updated_at": "2026-06-05T00:00:00+00:00"
+  }
+]
