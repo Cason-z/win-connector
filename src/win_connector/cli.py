@@ -160,6 +160,10 @@ def _default_template(protocol: Protocol) -> DeviceTemplate:
 
 def main(argv: list[str] | None = None) -> int:
     setup_logging()
+    if argv is None:
+        argv = sys.argv[1:]
+    if not argv:
+        argv = ["gui"]
     parser = build_parser()
     args = parser.parse_args(argv)
     storage = JSONStorage(args.storage)

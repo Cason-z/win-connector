@@ -36,8 +36,8 @@ class WinConnectorApp:
         self.i18n = I18N(language)
         self.title_override = title
         self.root = tk.Tk()
-        self.root.geometry("1320x780")
-        self.root.minsize(1120, 680)
+        self.root.geometry("1360x820")
+        self.root.minsize(1180, 720)
         apply_theme(self.root)
 
         self.search_var = tk.StringVar()
@@ -190,10 +190,10 @@ class WinConnectorApp:
 
         self.task_output = tk.Text(
             self.task_frame,
-            height=9,
-            bg=PALETTE["panel"],
+            height=8,
+            bg=PALETTE["field"],
             fg=PALETTE["text"],
-            insertbackground=PALETTE["cyan"],
+            insertbackground=PALETTE["accent"],
             highlightthickness=1,
             highlightbackground=PALETTE["border"],
             relief="flat",
@@ -206,9 +206,9 @@ class WinConnectorApp:
         self.task_history_list = tk.Listbox(
             self.task_frame,
             height=5,
-            bg=PALETTE["panel_alt"],
+            bg=PALETTE["field"],
             fg=PALETTE["text"],
-            selectbackground=PALETTE["cyan"],
+            selectbackground=PALETTE["selection"],
             selectforeground=PALETTE["bg"],
             relief="flat",
             highlightthickness=1,
@@ -585,33 +585,37 @@ class ConnectionEditor:
         self.existing = existing
         self.window = tk.Toplevel(parent, bg=PALETTE["bg"])
         self.window.title(i18n.t("editor.edit_title") if existing else i18n.t("editor.new_title"))
-        self.window.geometry("760x680")
-        self.window.minsize(680, 620)
+        self.window.geometry("820x760")
+        self.window.minsize(720, 700)
         self.window.transient(parent)
         self.window.grab_set()
         apply_theme(self.window)
         self.result: ConnectionCreateRequest | None = None
 
+        existing_config = existing.protocol_config if existing else None
         self.vars = {
             "name": tk.StringVar(value=existing.name if existing else ""),
             "group": tk.StringVar(value=existing.group if existing else "default"),
             "tags": tk.StringVar(value=",".join(existing.tags) if existing else ""),
             "template": tk.StringVar(value=(existing.device_template.value if existing else DeviceTemplate.LINUX.value)),
             "protocol": tk.StringVar(value=(existing.protocol.value if existing else Protocol.SSH.value)),
-            "host": tk.StringVar(value=getattr(existing.protocol_config, "host", "") if existing else ""),
-            "port": tk.StringVar(value=str(getattr(existing.protocol_config, "port", 22 if not existing else ""))),
-            "username": tk.StringVar(value=getattr(existing.protocol_config, "username", "") if existing else ""),
-            "password": tk.StringVar(value=getattr(existing.protocol_config, "password", "") if existing else ""),
-            "private_key_path": tk.StringVar(value=getattr(existing.protocol_config, "private_key_path", "") if existing else ""),
-            "port_name": tk.StringVar(value=getattr(existing.protocol_config, "port_name", "COM1") if existing else "COM1"),
-            "baudrate": tk.StringVar(value=str(getattr(existing.protocol_config, "baudrate", 9600) if existing else 9600)),
+            "host": tk.StringVar(value=getattr(existing_config, "host", "")),
+            "port": tk.StringVar(value=str(getattr(existing_config, "port", 22))),
+            "username": tk.StringVar(value=getattr(existing_config, "username", "")),
+            "password": tk.StringVar(value=getattr(existing_config, "password", "")),
+            "private_key_path": tk.StringVar(value=getattr(existing_config, "private_key_path", "")),
+            "port_name": tk.StringVar(value=getattr(existing_config, "port_name", "COM1")),
+            "baudrate": tk.StringVar(value=str(getattr(existing_config, "baudrate", 9600))),
         }
 
         self.protocol_display_map = {self.i18n.protocol_text(protocol): protocol.value for protocol in Protocol}
         self.template_display_map = {self.i18n.template_text(template): template.value for template in DeviceTemplate}
         self.protocol_selector_var = tk.StringVar(value=self._protocol_label(self.vars["protocol"].get()))
         self.template_selector_var = tk.StringVar(value=self._template_label(self.vars["template"].get()))
+        self.show_password_var = tk.BooleanVar(value=False)
         self.protocol_fields: list[ttk.Widget] = []
+        self.password_entry: ttk.Entry | None = None
+        self.password_toggle: ttk.Checkbutton | None = None
 
         self._build()
         self._render_protocol_fields()
@@ -677,10 +681,10 @@ class ConnectionEditor:
         )
         self.notes_text = tk.Text(
             notes_box,
-            height=7,
-            bg=PALETTE["panel"],
+            height=6,
+            bg=PALETTE["field"],
             fg=PALETTE["text"],
-            insertbackground=PALETTE["cyan"],
+            insertbackground=PALETTE["accent"],
             highlightthickness=1,
             highlightbackground=PALETTE["border"],
             relief="flat",
@@ -734,36 +738,81 @@ class ConnectionEditor:
         for widget in self.protocol_fields:
             widget.destroy()
         self.protocol_fields.clear()
+        self.password_entry = None
+        self.password_toggle = None
 
         protocol = Protocol(self.vars["protocol"].get())
         self.protocol_hint.configure(text=self.i18n.t(f"editor.protocol_hint.{protocol.value}"))
 
-        fields: list[tuple[str, str, bool]] = [
-            (self.i18n.t("editor.host"), "host", False),
-            (self.i18n.t("editor.port"), "port", False),
-            (self.i18n.t("editor.username"), "username", False),
-            (self.i18n.t("editor.password"), "password", True),
+        fields: list[tuple[str, str]] = [
+            (self.i18n.t("editor.host"), "host"),
+            (self.i18n.t("editor.port"), "port"),
         ]
         if protocol == Protocol.SSH:
-            fields.append((self.i18n.t("editor.private_key"), "private_key_path", False))
+            fields.append((self.i18n.t("editor.private_key"), "private_key_path"))
         elif protocol == Protocol.SERIAL:
             fields = [
-                (self.i18n.t("editor.port_name"), "port_name", False),
-                (self.i18n.t("editor.baudrate"), "baudrate", False),
+                (self.i18n.t("editor.port_name"), "port_name"),
+                (self.i18n.t("editor.baudrate"), "baudrate"),
             ]
         elif protocol == Protocol.RDP:
             fields = [
-                (self.i18n.t("editor.host"), "host", False),
-                (self.i18n.t("editor.port"), "port", False),
-                (self.i18n.t("editor.username"), "username", False),
+                (self.i18n.t("editor.host"), "host"),
+                (self.i18n.t("editor.port"), "port"),
+                (self.i18n.t("editor.username"), "username"),
             ]
 
-        for row, (label_text, key, secret) in enumerate(fields):
+        for row, (label_text, key) in enumerate(fields):
             label = ttk.Label(self.protocol_frame, text=label_text)
-            entry = ttk.Entry(self.protocol_frame, textvariable=self.vars[key], show="*" if secret else "")
+            entry = ttk.Entry(self.protocol_frame, textvariable=self.vars[key])
             label.grid(row=row, column=0, sticky="w", padx=(0, 10), pady=6)
             entry.grid(row=row, column=1, sticky="ew", pady=6)
             self.protocol_fields.extend([label, entry])
+
+        if protocol in {Protocol.SSH, Protocol.TELNET}:
+            row = len(fields)
+            credentials = ttk.LabelFrame(self.protocol_frame, text=self.i18n.t("editor.credentials"), padding=12)
+            credentials.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+            credentials.columnconfigure(1, weight=1)
+            hint = ttk.Label(
+                credentials,
+                text=self.i18n.t("editor.credentials_hint"),
+                style="Muted.TLabel",
+                wraplength=560,
+                justify="left",
+            )
+            hint.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+            username_label = ttk.Label(credentials, text=self.i18n.t("editor.username"))
+            username_entry = ttk.Entry(credentials, textvariable=self.vars["username"])
+            password_label = ttk.Label(credentials, text=self.i18n.t("editor.password"))
+            self.password_entry = ttk.Entry(credentials, textvariable=self.vars["password"], show="*")
+            self.password_toggle = ttk.Checkbutton(
+                credentials,
+                text=self.i18n.t("editor.show_password"),
+                variable=self.show_password_var,
+                command=self._sync_password_visibility,
+            )
+            username_label.grid(row=1, column=0, sticky="w", padx=(0, 10), pady=6)
+            username_entry.grid(row=1, column=1, sticky="ew", pady=6)
+            password_label.grid(row=2, column=0, sticky="w", padx=(0, 10), pady=6)
+            self.password_entry.grid(row=2, column=1, sticky="ew", pady=6)
+            self.password_toggle.grid(row=3, column=1, sticky="w", pady=(2, 0))
+            self.protocol_fields.extend(
+                [
+                    credentials,
+                    hint,
+                    username_label,
+                    username_entry,
+                    password_label,
+                    self.password_entry,
+                    self.password_toggle,
+                ]
+            )
+            self._sync_password_visibility()
+
+    def _sync_password_visibility(self) -> None:
+        if self.password_entry is not None:
+            self.password_entry.configure(show="" if self.show_password_var.get() else "*")
 
     def _save(self) -> None:
         try:
