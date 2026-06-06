@@ -4,6 +4,7 @@ import socket
 import time
 from dataclasses import dataclass
 from telnetlib import Telnet
+from urllib import request as urlrequest
 
 from win_connector.models import (
     ConnectionProfile,
@@ -14,6 +15,7 @@ from win_connector.models import (
     TaskExecutionResult,
     TaskTestResult,
     TelnetConfig,
+    WebConfig,
     utc_now,
 )
 from win_connector.presets import preset_by_id
@@ -62,6 +64,21 @@ def execute_task(profile: ConnectionProfile, command: str, timeout: float = 10.0
                 duration_ms=0,
                 started_at=utc_now(),
                 message="unsupported_remote_execution",
+            )
+        elif profile.protocol == Protocol.WEB:
+            result = TaskExecutionResult(
+                status="unsupported",
+                protocol=profile.protocol,
+                connection_id=profile.id,
+                command=resolved.command,
+                mode=resolved.mode,
+                preset_id=resolved.preset_id,
+                stdout="",
+                stderr="Web sessions open in the browser and do not support command execution.",
+                exit_code=None,
+                duration_ms=0,
+                started_at=utc_now(),
+                message="unsupported_web_execution",
             )
         else:
             raise RuntimeError(f"Unsupported protocol: {profile.protocol}")
@@ -113,6 +130,9 @@ def test_connection(profile: ConnectionProfile, timeout: float = 5.0) -> TaskTes
         if profile.protocol == Protocol.RDP:
             _test_rdp(profile, timeout)
             return TaskTestResult(connection_id=profile.id, protocol=profile.protocol, reachable=True, authenticated=False, error="", message="RDP port reachable; authentication is not verified")
+        if profile.protocol == Protocol.WEB:
+            _test_web(profile, timeout)
+            return TaskTestResult(connection_id=profile.id, protocol=profile.protocol, reachable=True, authenticated=False, error="", message="Web URL reachable")
     except Exception as exc:
         return TaskTestResult(
             connection_id=profile.id,
@@ -317,3 +337,15 @@ def _test_rdp(profile: ConnectionProfile, timeout: float) -> None:
     assert isinstance(config, RDPConfig)
     with socket.create_connection((config.host, config.port), timeout=timeout):
         return
+
+
+def _test_web(profile: ConnectionProfile, timeout: float) -> None:
+    config = profile.protocol_config
+    assert isinstance(config, WebConfig)
+    head_request = urlrequest.Request(config.url, method="HEAD")
+    try:
+        with urlrequest.urlopen(head_request, timeout=timeout) as response:
+            response.read(1)
+    except Exception:
+        with urlrequest.urlopen(config.url, timeout=timeout) as response:
+            response.read(1)

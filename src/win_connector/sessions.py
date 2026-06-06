@@ -4,10 +4,11 @@ import logging
 import os
 import subprocess
 import threading
+import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 
-from win_connector.models import ConnectResult, ConnectionProfile, Protocol, RDPConfig, SSHConfig, SerialConfig, TelnetConfig
+from win_connector.models import ConnectResult, ConnectionProfile, Protocol, RDPConfig, SSHConfig, SerialConfig, TelnetConfig, WebConfig
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,19 @@ def open_rdp_external(profile: ConnectionProfile) -> ConnectResult:
         mode="unsupported",
         message="RDP external launch is only supported on Windows",
         command=[],
+    )
+
+
+def open_web_external(profile: ConnectionProfile) -> ConnectResult:
+    config = profile.protocol_config
+    assert isinstance(config, WebConfig)
+    webbrowser.open(config.url)
+    return ConnectResult(
+        connection_id=profile.id,
+        protocol=profile.protocol,
+        mode="browser",
+        message=f"Opened {config.url}",
+        command=[config.url],
     )
 
 
@@ -294,6 +308,14 @@ def start_gui_session_tab(profile: ConnectionProfile, parent) -> ConnectResult:
             state["close"] = _start_gui_serial(profile, append_output, entry)
         elif profile.protocol == Protocol.RDP:
             result = open_rdp_external(profile)
+            append_output(result.message + "\n")
+            return result
+        elif profile.protocol == Protocol.WEB:
+            result = open_web_external(profile)
+            append_output(result.message + "\n")
+            return result
+        elif profile.protocol == Protocol.WEB:
+            result = open_web_external(profile)
             append_output(result.message + "\n")
             return result
         else:

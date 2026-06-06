@@ -17,6 +17,7 @@ class Protocol(str, Enum):
     TELNET = "telnet"
     SERIAL = "serial"
     RDP = "rdp"
+    WEB = "web"
 
 
 class DeviceTemplate(str, Enum):
@@ -27,6 +28,7 @@ class DeviceTemplate(str, Enum):
     JUNIPER = "juniper"
     FIREWALL_GENERIC = "firewall_generic"
     SERIAL_CONSOLE = "serial_console"
+    WEB_APP = "web_app"
 
 
 class SSHConfig(BaseModel):
@@ -68,8 +70,16 @@ class RDPConfig(BaseModel):
     screen_mode: str = "windowed"
 
 
+class WebConfig(BaseModel):
+    protocol: Literal["web"] = "web"
+    url: str
+    username: str = ""
+    password: str = ""
+    browser: str = "default"
+
+
 ProtocolConfig = Annotated[
-    SSHConfig | TelnetConfig | SerialConfig | RDPConfig,
+    SSHConfig | TelnetConfig | SerialConfig | RDPConfig | WebConfig,
     Field(discriminator="protocol"),
 ]
 

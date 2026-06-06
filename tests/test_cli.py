@@ -1,4 +1,7 @@
 import unittest
+import tempfile
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -23,6 +26,36 @@ class CLIDefaultGuiTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         app_class.assert_called_once()
         app.run.assert_called_once_with()
+
+    def test_add_web_profile_stores_url_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = Path(tmpdir) / "connections.json"
+
+            with redirect_stdout(StringIO()):
+                exit_code = cli.main(
+                    [
+                        "--storage",
+                        str(storage),
+                        "add",
+                        "--name",
+                        "Router UI",
+                        "--protocol",
+                        "web",
+                        "--url",
+                        "http://10.0.0.1",
+                        "--username",
+                        "admin",
+                        "--password",
+                        "secret",
+                        "--json",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            data = storage.read_text(encoding="utf-8")
+            self.assertIn('"protocol": "web"', data)
+            self.assertIn('"url": "http://10.0.0.1"', data)
+            self.assertIn('"username": "admin"', data)
 
 
 if __name__ == "__main__":

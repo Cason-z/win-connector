@@ -4,12 +4,12 @@ import subprocess
 import tkinter as tk
 from tkinter import messagebox, ttk
 
+from win_connector.config import task_history_path_for
 from win_connector.i18n import I18N, SUPPORTED_LANGUAGES
-from win_connector.launcher import ConnectionLauncher
 from win_connector.models import (
-    ConnectionTestRequest,
     ConnectionCreateRequest,
     ConnectionProfile,
+    ConnectionTestRequest,
     ConnectionUpdateRequest,
     DeviceTemplate,
     Protocol,
@@ -18,13 +18,13 @@ from win_connector.models import (
     SerialConfig,
     TaskExecuteRequest,
     TelnetConfig,
+    WebConfig,
 )
 from win_connector.service import ConnectionService
-from win_connector.sessions import open_external_terminal, start_gui_session_tab
+from win_connector.sessions import open_external_terminal, open_rdp_external, open_web_external, start_gui_session_tab
 from win_connector.tasks import TaskService
 from win_connector.templates import TEMPLATE_PROTOCOL_MAP
 from win_connector.theme import PALETTE, apply_theme
-from win_connector.config import task_history_path_for
 
 
 ALL_FILTER = "__all__"
@@ -33,12 +33,12 @@ ALL_FILTER = "__all__"
 class WinConnectorApp:
     def __init__(self, service: ConnectionService, title: str | None = None, language: str | None = None) -> None:
         self.service = service
-        self.launcher = ConnectionLauncher()
         self.task_service = TaskService(task_history_path_for(service.storage.path))
         self.i18n = I18N(language)
         self.title_override = title
+
         self.root = tk.Tk()
-        self.root.geometry("1360x820")
+        self.root.geometry("1440x860")
         self.root.minsize(1180, 720)
         apply_theme(self.root)
 
@@ -49,11 +49,12 @@ class WinConnectorApp:
         self.language_var = tk.StringVar(value=self.i18n.language)
         self.empty_var = tk.StringVar()
         self.status_var = tk.StringVar()
-        self.task_command_var = tk.StringVar()
-        self.task_preset_var = tk.StringVar()
-        self.task_timeout_var = tk.StringVar(value="10")
-        self.task_target_var = tk.StringVar()
-        self.task_summary_var = tk.StringVar()
+        self.action_status_var = tk.StringVar(value="Ready")
+        self.detail_name_var = tk.StringVar()
+        self.detail_endpoint_var = tk.StringVar()
+        self.detail_meta_var = tk.StringVar()
+        self.detail_notes_var = tk.StringVar()
+
         self.quick_name_var = tk.StringVar()
         self.quick_protocol_var = tk.StringVar(value=Protocol.SSH.value)
         self.quick_template_var = tk.StringVar(value=DeviceTemplate.LINUX.value)
@@ -65,13 +66,18 @@ class WinConnectorApp:
         self.quick_tags_var = tk.StringVar()
         self.quick_show_password_var = tk.BooleanVar(value=False)
         self.new_group_var = tk.StringVar()
+
         self.service_local_port_var = tk.StringVar(value="8080")
         self.service_remote_host_var = tk.StringVar(value="127.0.0.1")
         self.service_remote_port_var = tk.StringVar(value="80")
-        self.action_status_var = tk.StringVar()
-        self.motion_phase = 0
+        self.task_command_var = tk.StringVar()
+        self.task_preset_var = tk.StringVar()
+        self.task_timeout_var = tk.StringVar(value="10")
+        self.task_target_var = tk.StringVar()
+        self.task_summary_var = tk.StringVar()
 
         self.all_profiles: list[ConnectionProfile] = []
+        self.visible_profiles: list[ConnectionProfile] = []
         self.recent_tasks: list[dict[str, str]] = []
         self.manual_groups: set[str] = set()
         self.protocol_filter_map: dict[str, str] = {}
@@ -81,6 +87,9 @@ class WinConnectorApp:
         self.task_preset_map: dict[str, str] = {}
         self.quick_protocol_map: dict[str, str] = {}
         self.quick_template_map: dict[str, str] = {}
+        self.session_node_map: dict[str, str] = {}
+        self.active_tab_frames: dict[str, ttk.Frame] = {}
+        self.motion_phase = 0
 
         self._build()
         self._bind_events()
@@ -92,261 +101,260 @@ class WinConnectorApp:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
 
-        container = ttk.Frame(self.root, style="Root.TFrame", padding=16)
+        container = ttk.Frame(self.root, style="Root.TFrame", padding=14)
         container.grid(row=0, column=0, sticky="nsew")
         container.columnconfigure(0, weight=1)
         container.rowconfigure(2, weight=1)
 
-        self.header_frame = ttk.Frame(container, style="Header.TFrame", padding=18)
+        self.header_frame = ttk.Frame(container, style="Header.TFrame", padding=(16, 14))
         self.header_frame.grid(row=0, column=0, sticky="ew")
-        self.header_frame.columnconfigure(0, weight=1)
+        self.header_frame.columnconfigure(1, weight=1)
 
-        self.header_canvas = tk.Canvas(
-            self.header_frame,
-            height=4,
-            bg=PALETTE["panel"],
-            bd=0,
-            highlightthickness=0,
-            relief="flat",
-        )
-        self.header_canvas.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
-
-        brand_frame = ttk.Frame(self.header_frame, style="Header.TFrame")
-        brand_frame.grid(row=1, column=0, sticky="w")
-        self.brand_label = ttk.Label(brand_frame, style="Brand.TLabel")
+        brand = ttk.Frame(self.header_frame, style="Header.TFrame")
+        brand.grid(row=0, column=0, sticky="w")
+        self.brand_label = ttk.Label(brand, style="Brand.TLabel")
         self.brand_label.grid(row=0, column=0, sticky="w")
-        self.subtitle_label = ttk.Label(brand_frame, style="Muted.TLabel")
-        self.subtitle_label.grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.subtitle_label = ttk.Label(brand, style="Muted.TLabel")
+        self.subtitle_label.grid(row=1, column=0, sticky="w", pady=(4, 0))
+
+        self.header_canvas = tk.Canvas(self.header_frame, height=36, bg=PALETTE["panel"], bd=0, highlightthickness=0)
+        self.header_canvas.grid(row=0, column=1, sticky="ew", padx=18)
 
         self.language_frame = ttk.Frame(self.header_frame, style="Header.TFrame")
-        self.language_frame.grid(row=1, column=1, sticky="e")
+        self.language_frame.grid(row=0, column=2, sticky="e")
         self.language_label = ttk.Label(self.language_frame, style="Section.TLabel")
         self.language_label.grid(row=0, column=0, sticky="e", padx=(0, 8))
         self.language_combo = ttk.Combobox(self.language_frame, state="readonly", textvariable=self.language_var, width=12)
         self.language_combo.grid(row=0, column=1, sticky="e")
 
-        self.quick_frame = ttk.LabelFrame(container, style="Glow.TLabelframe", padding=(18, 14))
-        self.quick_frame.grid(row=1, column=0, sticky="ew", pady=(14, 14))
-        self.quick_frame.columnconfigure(1, weight=1)
-        self.quick_frame.columnconfigure(3, weight=1)
-        self.quick_frame.columnconfigure(5, weight=1)
+        self.quick_frame = ttk.Frame(container, style="Panel.TFrame", padding=(14, 12))
+        self.quick_frame.grid(row=1, column=0, sticky="ew", pady=(12, 12))
+        for column in (1, 3, 5, 7):
+            self.quick_frame.columnconfigure(column, weight=1)
 
         self.quick_title_label = ttk.Label(self.quick_frame, style="Section.TLabel")
-        self.quick_title_label.grid(row=0, column=0, columnspan=6, sticky="w", pady=(0, 10))
-
-        self.quick_name_label = ttk.Label(self.quick_frame)
-        self.quick_name_label.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=5)
-        self.quick_name_entry = ttk.Entry(self.quick_frame, textvariable=self.quick_name_var)
-        self.quick_name_entry.grid(row=1, column=1, sticky="ew", pady=5)
-
-        self.quick_protocol_label = ttk.Label(self.quick_frame)
-        self.quick_protocol_label.grid(row=1, column=2, sticky="w", padx=(16, 8), pady=5)
-        self.quick_protocol_combo = ttk.Combobox(self.quick_frame, state="readonly", textvariable=self.quick_protocol_var, width=16)
-        self.quick_protocol_combo.grid(row=1, column=3, sticky="ew", pady=5)
-
-        self.quick_template_label = ttk.Label(self.quick_frame)
-        self.quick_template_label.grid(row=1, column=4, sticky="w", padx=(16, 8), pady=5)
-        self.quick_template_combo = ttk.Combobox(self.quick_frame, state="readonly", textvariable=self.quick_template_var, width=18)
-        self.quick_template_combo.grid(row=1, column=5, sticky="ew", pady=5)
-
-        self.quick_host_label = ttk.Label(self.quick_frame)
-        self.quick_host_label.grid(row=2, column=0, sticky="w", padx=(0, 8), pady=5)
+        self.quick_title_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.quick_name_entry = ttk.Entry(self.quick_frame, textvariable=self.quick_name_var, width=18)
+        self.quick_name_entry.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+        self.quick_protocol_combo = ttk.Combobox(self.quick_frame, state="readonly", textvariable=self.quick_protocol_var, width=12)
+        self.quick_protocol_combo.grid(row=0, column=2, sticky="ew", padx=(0, 8))
         self.quick_host_entry = ttk.Entry(self.quick_frame, textvariable=self.quick_host_var)
-        self.quick_host_entry.grid(row=2, column=1, sticky="ew", pady=5)
-
-        self.quick_port_label = ttk.Label(self.quick_frame)
-        self.quick_port_label.grid(row=2, column=2, sticky="w", padx=(16, 8), pady=5)
-        self.quick_port_entry = ttk.Entry(self.quick_frame, textvariable=self.quick_port_var, width=10)
-        self.quick_port_entry.grid(row=2, column=3, sticky="w", pady=5)
-
-        self.quick_group_label = ttk.Label(self.quick_frame)
-        self.quick_group_label.grid(row=2, column=4, sticky="w", padx=(16, 8), pady=5)
-        self.quick_group_entry = ttk.Entry(self.quick_frame, textvariable=self.quick_group_var)
-        self.quick_group_entry.grid(row=2, column=5, sticky="ew", pady=5)
-
-        self.quick_username_label = ttk.Label(self.quick_frame)
-        self.quick_username_label.grid(row=3, column=0, sticky="w", padx=(0, 8), pady=5)
+        self.quick_host_entry.grid(row=0, column=3, sticky="ew", padx=(0, 8))
+        self.quick_port_entry = ttk.Entry(self.quick_frame, textvariable=self.quick_port_var, width=8)
+        self.quick_port_entry.grid(row=0, column=4, sticky="ew", padx=(0, 8))
         self.quick_username_entry = ttk.Entry(self.quick_frame, textvariable=self.quick_username_var)
-        self.quick_username_entry.grid(row=3, column=1, sticky="ew", pady=5)
-
-        self.quick_password_label = ttk.Label(self.quick_frame)
-        self.quick_password_label.grid(row=3, column=2, sticky="w", padx=(16, 8), pady=5)
+        self.quick_username_entry.grid(row=0, column=5, sticky="ew", padx=(0, 8))
         self.quick_password_entry = ttk.Entry(self.quick_frame, textvariable=self.quick_password_var, show="*")
-        self.quick_password_entry.grid(row=3, column=3, sticky="ew", pady=5)
-
-        self.quick_show_password = ttk.Checkbutton(
-            self.quick_frame,
-            variable=self.quick_show_password_var,
-            command=self._sync_quick_password_visibility,
-        )
-        self.quick_show_password.grid(row=3, column=4, sticky="w", padx=(16, 8), pady=5)
-
+        self.quick_password_entry.grid(row=0, column=6, sticky="ew", padx=(0, 8))
+        self.quick_group_entry = ttk.Entry(self.quick_frame, textvariable=self.quick_group_var)
+        self.quick_group_entry.grid(row=0, column=7, sticky="ew", padx=(0, 8))
         self.quick_add_button = ttk.Button(self.quick_frame, style="Accent.TButton", command=self.quick_add_connection)
-        self.quick_add_button.grid(row=3, column=5, sticky="e", pady=5)
+        self.quick_add_button.grid(row=0, column=8, sticky="e")
 
-        self.search_strip = ttk.Frame(self.quick_frame, style="Panel.TFrame")
-        self.search_strip.grid(row=4, column=0, columnspan=6, sticky="ew", pady=(12, 0))
-        self.search_strip.columnconfigure(1, weight=1)
-        self.search_label = ttk.Label(self.search_strip, style="Section.TLabel")
-        self.search_label.grid(row=0, column=0, sticky="w", padx=(0, 12))
-        self.search_entry = ttk.Entry(self.search_strip, textvariable=self.search_var)
-        self.search_entry.grid(row=0, column=1, sticky="ew")
-        self.clear_button = ttk.Button(self.search_strip, command=self._clear_filters)
-        self.clear_button.grid(row=0, column=2, sticky="e", padx=(12, 0))
-        self.search_hint = ttk.Label(self.search_strip, style="Muted.TLabel")
-        self.search_hint.grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        self.quick_template_combo = ttk.Combobox(self.quick_frame, state="readonly", textvariable=self.quick_template_var, width=18)
+        self.quick_template_combo.grid(row=1, column=2, sticky="ew", padx=(0, 8), pady=(10, 0))
+        self.quick_show_password = ttk.Checkbutton(self.quick_frame, variable=self.quick_show_password_var, command=self._sync_quick_password_visibility)
+        self.quick_show_password.grid(row=1, column=6, sticky="w", pady=(10, 0))
+        self.quick_name_label = ttk.Label(self.quick_frame, style="Muted.TLabel")
+        self.quick_name_label.grid(row=1, column=1, sticky="w", pady=(10, 0))
+        self.quick_protocol_label = ttk.Label(self.quick_frame, style="Muted.TLabel")
+        self.quick_protocol_label.grid(row=1, column=3, sticky="w", pady=(10, 0))
+        self.quick_template_label = ttk.Label(self.quick_frame, style="Muted.TLabel")
+        self.quick_template_label.grid(row=1, column=4, sticky="w", pady=(10, 0))
+        self.quick_host_label = ttk.Label(self.quick_frame, style="Muted.TLabel")
+        self.quick_host_label.grid(row=1, column=5, sticky="w", pady=(10, 0))
+        self.quick_port_label = ttk.Label(self.quick_frame, style="Muted.TLabel")
+        self.quick_port_label.grid(row=1, column=7, sticky="w", pady=(10, 0))
+        self.quick_group_label = ttk.Label(self.quick_frame, style="Muted.TLabel")
+        self.quick_group_label.grid(row=1, column=8, sticky="e", pady=(10, 0))
 
         content = ttk.Frame(container, style="Root.TFrame")
         content.grid(row=2, column=0, sticky="nsew")
         content.columnconfigure(1, weight=1)
         content.rowconfigure(0, weight=1)
 
-        self.sidebar = ttk.LabelFrame(content, style="Glow.TLabelframe", padding=16)
-        self.sidebar.grid(row=0, column=0, sticky="nsw", padx=(0, 14))
+        self.sidebar = ttk.Frame(content, style="Panel.TFrame", padding=14)
+        self.sidebar.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         self.sidebar.columnconfigure(0, weight=1)
-        self.sidebar.rowconfigure(10, weight=1)
+        self.sidebar.rowconfigure(8, weight=1)
 
-        self.filters_title = ttk.Label(self.sidebar, style="Section.TLabel")
-        self.filters_title.grid(row=0, column=0, sticky="w")
-        self.protocol_label = ttk.Label(self.sidebar)
-        self.protocol_label.grid(row=1, column=0, sticky="w", pady=(14, 4))
-        self.protocol_combo = ttk.Combobox(self.sidebar, state="readonly", textvariable=self.protocol_filter_var, width=24)
-        self.protocol_combo.grid(row=2, column=0, sticky="ew")
-        self.template_label = ttk.Label(self.sidebar)
-        self.template_label.grid(row=3, column=0, sticky="w", pady=(14, 4))
-        self.template_combo = ttk.Combobox(self.sidebar, state="readonly", textvariable=self.template_filter_var, width=24)
-        self.template_combo.grid(row=4, column=0, sticky="ew")
-        self.group_label = ttk.Label(self.sidebar)
-        self.group_label.grid(row=5, column=0, sticky="w", pady=(14, 4))
-        self.group_combo = ttk.Combobox(self.sidebar, state="readonly", textvariable=self.group_filter_var, width=24)
-        self.group_combo.grid(row=6, column=0, sticky="ew")
-        self.filter_summary = ttk.Label(self.sidebar, style="Muted.TLabel", wraplength=220, justify="left")
-        self.filter_summary.grid(row=7, column=0, sticky="ew", pady=(16, 0))
+        self.sessions_title = ttk.Label(self.sidebar, style="Section.TLabel")
+        self.sessions_title.grid(row=0, column=0, sticky="w")
+        self.search_entry = ttk.Entry(self.sidebar, textvariable=self.search_var)
+        self.search_entry.grid(row=1, column=0, sticky="ew", pady=(10, 8))
+        self.search_label = ttk.Label(self.sidebar, style="Muted.TLabel")
+        self.search_label.grid(row=2, column=0, sticky="w")
+        self.search_hint = ttk.Label(self.sidebar, style="Muted.TLabel", wraplength=245, justify="left")
+        self.search_hint.grid(row=3, column=0, sticky="ew", pady=(2, 10))
+
+        filters = ttk.Frame(self.sidebar, style="Panel.TFrame")
+        filters.grid(row=4, column=0, sticky="ew")
+        filters.columnconfigure(0, weight=1)
+        self.filters_title = ttk.Label(filters, style="Section.TLabel")
+        self.filters_title.grid(row=0, column=0, sticky="w", pady=(0, 6))
+        self.protocol_label = ttk.Label(filters, style="Muted.TLabel")
+        self.protocol_label.grid(row=1, column=0, sticky="w")
+        self.protocol_combo = ttk.Combobox(filters, state="readonly", textvariable=self.protocol_filter_var, width=24)
+        self.protocol_combo.grid(row=2, column=0, sticky="ew", pady=(2, 8))
+        self.template_label = ttk.Label(filters, style="Muted.TLabel")
+        self.template_label.grid(row=3, column=0, sticky="w")
+        self.template_combo = ttk.Combobox(filters, state="readonly", textvariable=self.template_filter_var, width=24)
+        self.template_combo.grid(row=4, column=0, sticky="ew", pady=(2, 8))
+        self.group_label = ttk.Label(filters, style="Muted.TLabel")
+        self.group_label.grid(row=5, column=0, sticky="w")
+        self.group_combo = ttk.Combobox(filters, state="readonly", textvariable=self.group_filter_var, width=24)
+        self.group_combo.grid(row=6, column=0, sticky="ew", pady=(2, 8))
+        self.clear_button = ttk.Button(filters, command=self._clear_filters)
+        self.clear_button.grid(row=7, column=0, sticky="ew", pady=(2, 8))
+        self.filter_summary = ttk.Label(filters, style="Muted.TLabel", wraplength=245, justify="left")
+        self.filter_summary.grid(row=8, column=0, sticky="ew")
 
         self.group_add_title = ttk.Label(self.sidebar, style="Section.TLabel")
-        self.group_add_title.grid(row=8, column=0, sticky="w", pady=(24, 6))
+        self.group_add_title.grid(row=5, column=0, sticky="w", pady=(14, 6))
         group_add = ttk.Frame(self.sidebar, style="Panel.TFrame")
-        group_add.grid(row=9, column=0, sticky="ew")
+        group_add.grid(row=6, column=0, sticky="ew")
         group_add.columnconfigure(0, weight=1)
         self.new_group_entry = ttk.Entry(group_add, textvariable=self.new_group_var)
         self.new_group_entry.grid(row=0, column=0, sticky="ew")
         self.add_group_button = ttk.Button(group_add, style="Icon.TButton", command=self.add_group)
-        self.add_group_button.grid(row=0, column=1, sticky="e", padx=(8, 0))
+        self.add_group_button.grid(row=0, column=1, padx=(8, 0))
 
-        self.sessions_title = ttk.Label(self.sidebar, style="Section.TLabel")
-        self.sessions_title.grid(row=10, column=0, sticky="w", pady=(24, 6))
-        self.session_list = tk.Listbox(
-            self.sidebar,
-            height=10,
-            bg=PALETTE["field"],
-            fg=PALETTE["text"],
-            selectbackground=PALETTE["selection"],
-            selectforeground=PALETTE["text"],
-            relief="flat",
-            highlightthickness=1,
-            highlightbackground=PALETTE["border"],
-        )
-        self.session_list.grid(row=11, column=0, sticky="nsew")
+        self.session_tree = ttk.Treeview(self.sidebar, columns=("endpoint",), show="tree", selectmode="browse")
+        self.session_tree.grid(row=8, column=0, sticky="nsew", pady=(14, 0))
+        self.session_tree.column("#0", width=245, anchor="w")
+        self.session_tree_scroll = ttk.Scrollbar(self.sidebar, orient="vertical", command=self.session_tree.yview)
+        self.session_tree_scroll.grid(row=8, column=1, sticky="ns", pady=(14, 0))
+        self.session_tree.configure(yscrollcommand=self.session_tree_scroll.set)
 
-        main_panel = ttk.Frame(content, style="Panel.TFrame", padding=16)
-        main_panel.grid(row=0, column=1, sticky="nsew")
-        main_panel.columnconfigure(0, weight=1)
-        main_panel.rowconfigure(0, weight=1)
-        main_panel.rowconfigure(1, weight=0)
+        self.session_list = tk.Listbox(self.sidebar, height=1, bg=PALETTE["field"], fg=PALETTE["text"], relief="flat")
 
-        tree_frame = ttk.Frame(main_panel, style="Card.TFrame", padding=10)
-        tree_frame.grid(row=0, column=0, sticky="nsew")
-        tree_frame.columnconfigure(0, weight=1)
-        tree_frame.rowconfigure(0, weight=1)
+        main = ttk.Frame(content, style="Root.TFrame")
+        main.grid(row=0, column=1, sticky="nsew")
+        main.columnconfigure(0, weight=1)
+        main.columnconfigure(1, weight=0)
+        main.rowconfigure(0, weight=1)
 
-        columns = ("name", "protocol", "endpoint", "group", "template", "tags")
-        self.tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="browse")
-        self.tree.grid(row=0, column=0, sticky="nsew")
-        self.tree.column("name", width=240, anchor="w")
-        self.tree.column("protocol", width=110, anchor="center")
-        self.tree.column("endpoint", width=270, anchor="w")
-        self.tree.column("group", width=180, anchor="w")
-        self.tree.column("template", width=160, anchor="w")
-        self.tree.column("tags", width=240, anchor="w")
+        workspace = ttk.Frame(main, style="Panel.TFrame", padding=12)
+        workspace.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        workspace.columnconfigure(0, weight=1)
+        workspace.rowconfigure(1, weight=1)
 
-        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        self.tree.configure(yscrollcommand=scrollbar.set)
+        work_header = ttk.Frame(workspace, style="Panel.TFrame")
+        work_header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        work_header.columnconfigure(0, weight=1)
+        self.task_target_label = ttk.Label(work_header, style="Section.TLabel")
+        self.task_target_label.grid(row=0, column=0, sticky="w")
+        self.task_target_value = ttk.Label(work_header, textvariable=self.task_target_var, style="Muted.TLabel")
+        self.task_target_value.grid(row=1, column=0, sticky="w", pady=(3, 0))
+        tab_tools = ttk.Frame(work_header, style="Panel.TFrame")
+        tab_tools.grid(row=0, column=1, rowspan=2, sticky="e")
+        ttk.Button(tab_tools, text="Connect", style="Accent.TButton", command=self.open_terminal_tab).pack(side="left", padx=(0, 8))
+        ttk.Button(tab_tools, text="Close Tab", command=self.close_current_tab).pack(side="left")
 
-        self.terminal_notebook = ttk.Notebook(main_panel)
-        self.terminal_notebook.grid(row=1, column=0, sticky="nsew", pady=(14, 0))
-        main_panel.rowconfigure(1, weight=1)
+        self.terminal_notebook = ttk.Notebook(workspace)
+        self.terminal_notebook.grid(row=1, column=0, sticky="nsew")
+        self._add_home_tab()
 
-        self.task_frame = ttk.LabelFrame(main_panel, padding=14)
-        self.task_frame.grid(row=2, column=0, sticky="ew", pady=(14, 0))
+        bottom = ttk.Notebook(workspace)
+        bottom.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        self.task_frame = ttk.Frame(bottom, style="Panel.TFrame", padding=12)
+        bottom.add(self.task_frame, text="Command")
         self.task_frame.columnconfigure(1, weight=1)
         self.task_frame.columnconfigure(3, weight=1)
+        self._build_task_panel()
 
-        self.task_target_label = ttk.Label(self.task_frame, style="Section.TLabel")
-        self.task_target_label.grid(row=0, column=0, sticky="w")
-        self.task_target_value = ttk.Label(self.task_frame, textvariable=self.task_target_var, style="Muted.TLabel")
-        self.task_target_value.grid(row=0, column=1, columnspan=3, sticky="w", padx=(8, 0))
+        inspector = ttk.Frame(main, style="Panel.TFrame", padding=14, width=330)
+        inspector.grid(row=0, column=1, sticky="nsew")
+        inspector.columnconfigure(0, weight=1)
 
-        self.actions_title_label = ttk.Label(self.task_frame, style="Section.TLabel")
-        self.actions_title_label.grid(row=1, column=0, sticky="w", pady=(14, 6))
-        actions = ttk.Frame(self.task_frame, style="Panel.TFrame")
-        actions.grid(row=1, column=1, columnspan=3, sticky="ew", padx=(8, 0), pady=(14, 6))
-        actions.columnconfigure(4, weight=1)
-        self.open_terminal_button = ttk.Button(actions, style="Accent.TButton", command=self.open_terminal)
-        self.open_terminal_button.grid(row=0, column=0, sticky="w", padx=(0, 8))
-        self.open_files_button = ttk.Button(actions, command=self.open_files)
-        self.open_files_button.grid(row=0, column=1, sticky="w", padx=(0, 8))
-        self.copy_command_button = ttk.Button(actions, command=self.copy_launch_command)
-        self.copy_command_button.grid(row=0, column=2, sticky="w", padx=(0, 8))
-        self.action_status_label = ttk.Label(actions, textvariable=self.action_status_var, style="Muted.TLabel")
-        self.action_status_label.grid(row=0, column=4, sticky="w")
+        self.detail_title_label = ttk.Label(inspector, textvariable=self.detail_name_var, style="Brand.TLabel", wraplength=300)
+        self.detail_title_label.grid(row=0, column=0, sticky="ew")
+        self.detail_endpoint_label = ttk.Label(inspector, textvariable=self.detail_endpoint_var, style="Section.TLabel", wraplength=300)
+        self.detail_endpoint_label.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.detail_meta_label = ttk.Label(inspector, textvariable=self.detail_meta_var, style="Muted.TLabel", wraplength=300, justify="left")
+        self.detail_meta_label.grid(row=2, column=0, sticky="ew", pady=(8, 14))
 
-        self.service_title_label = ttk.Label(self.task_frame, style="Section.TLabel")
-        self.service_title_label.grid(row=2, column=0, sticky="w", pady=(8, 6))
-        service_row = ttk.Frame(self.task_frame, style="Panel.TFrame")
-        service_row.grid(row=2, column=1, columnspan=3, sticky="ew", padx=(8, 0), pady=(8, 6))
-        service_row.columnconfigure(1, weight=1)
-        service_row.columnconfigure(3, weight=1)
-        self.service_local_port_label = ttk.Label(service_row)
-        self.service_local_port_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
-        self.service_local_port_entry = ttk.Entry(service_row, textvariable=self.service_local_port_var, width=8)
-        self.service_local_port_entry.grid(row=0, column=1, sticky="w", padx=(0, 12))
-        self.service_remote_host_label = ttk.Label(service_row)
-        self.service_remote_host_label.grid(row=0, column=2, sticky="w", padx=(0, 8))
-        self.service_remote_host_entry = ttk.Entry(service_row, textvariable=self.service_remote_host_var)
-        self.service_remote_host_entry.grid(row=0, column=3, sticky="ew", padx=(0, 12))
-        self.service_remote_port_label = ttk.Label(service_row)
-        self.service_remote_port_label.grid(row=0, column=4, sticky="w", padx=(0, 8))
-        self.service_remote_port_entry = ttk.Entry(service_row, textvariable=self.service_remote_port_var, width=8)
-        self.service_remote_port_entry.grid(row=0, column=5, sticky="w", padx=(0, 12))
-        self.start_tunnel_button = ttk.Button(service_row, command=self.start_tunnel)
-        self.start_tunnel_button.grid(row=0, column=6, sticky="e")
+        self.actions_title_label = ttk.Label(inspector, style="Section.TLabel")
+        self.actions_title_label.grid(row=3, column=0, sticky="w")
+        self.open_terminal_button = ttk.Button(inspector, style="Accent.TButton", command=self.open_terminal)
+        self.open_terminal_button.grid(row=4, column=0, sticky="ew", pady=(8, 6))
+        self.open_files_button = ttk.Button(inspector, command=self.open_files)
+        self.open_files_button.grid(row=5, column=0, sticky="ew", pady=6)
+        self.copy_command_button = ttk.Button(inspector, command=self.copy_launch_command)
+        self.copy_command_button.grid(row=6, column=0, sticky="ew", pady=6)
+        self.action_status_label = ttk.Label(inspector, textvariable=self.action_status_var, style="Muted.TLabel", wraplength=300, justify="left")
+        self.action_status_label.grid(row=7, column=0, sticky="ew", pady=(8, 14))
 
+        self.service_title_label = ttk.Label(inspector, style="Section.TLabel")
+        self.service_title_label.grid(row=8, column=0, sticky="w")
+        tunnel = ttk.Frame(inspector, style="Panel.TFrame")
+        tunnel.grid(row=9, column=0, sticky="ew", pady=(8, 12))
+        tunnel.columnconfigure(1, weight=1)
+        self.service_local_port_label = ttk.Label(tunnel)
+        self.service_local_port_label.grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
+        self.service_local_port_entry = ttk.Entry(tunnel, textvariable=self.service_local_port_var, width=8)
+        self.service_local_port_entry.grid(row=0, column=1, sticky="ew", pady=4)
+        self.service_remote_host_label = ttk.Label(tunnel)
+        self.service_remote_host_label.grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+        self.service_remote_host_entry = ttk.Entry(tunnel, textvariable=self.service_remote_host_var)
+        self.service_remote_host_entry.grid(row=1, column=1, sticky="ew", pady=4)
+        self.service_remote_port_label = ttk.Label(tunnel)
+        self.service_remote_port_label.grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+        self.service_remote_port_entry = ttk.Entry(tunnel, textvariable=self.service_remote_port_var, width=8)
+        self.service_remote_port_entry.grid(row=2, column=1, sticky="ew", pady=4)
+        self.start_tunnel_button = ttk.Button(tunnel, command=self.start_tunnel)
+        self.start_tunnel_button.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+
+        notes_title = ttk.Label(inspector, text="Notes", style="Section.TLabel")
+        notes_title.grid(row=10, column=0, sticky="w", pady=(8, 6))
+        self.detail_notes_label = ttk.Label(inspector, textvariable=self.detail_notes_var, style="Muted.TLabel", wraplength=300, justify="left")
+        self.detail_notes_label.grid(row=11, column=0, sticky="ew")
+
+        self.button_bar = ttk.Frame(inspector, style="Panel.TFrame")
+        self.button_bar.grid(row=12, column=0, sticky="ew", pady=(18, 0))
+        for index in range(2):
+            self.button_bar.columnconfigure(index, weight=1)
+        self.add_button = ttk.Button(self.button_bar, style="Accent.TButton", command=self.add_connection)
+        self.add_button.grid(row=0, column=0, sticky="ew", padx=(0, 6), pady=4)
+        self.edit_button = ttk.Button(self.button_bar, command=self.edit_connection)
+        self.edit_button.grid(row=0, column=1, sticky="ew", padx=(6, 0), pady=4)
+        self.delete_button = ttk.Button(self.button_bar, style="Danger.TButton", command=self.delete_connection)
+        self.delete_button.grid(row=1, column=0, sticky="ew", padx=(0, 6), pady=4)
+        self.refresh_button = ttk.Button(self.button_bar, command=self.refresh)
+        self.refresh_button.grid(row=1, column=1, sticky="ew", padx=(6, 0), pady=4)
+        self.connect_button = ttk.Button(self.button_bar, style="Accent.TButton", command=self.connect_connection)
+        self.connect_button.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+
+        columns = ("name", "protocol", "endpoint", "group", "template", "tags")
+        self.tree = ttk.Treeview(workspace, columns=columns, show="headings", selectmode="browse")
+        for column in columns:
+            self.tree.heading(column, text=column)
+
+        self.status_label = ttk.Label(container, style="Status.TLabel", textvariable=self.status_var, padding=(14, 9))
+        self.status_label.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+
+    def _build_task_panel(self) -> None:
         self.task_preset_label = ttk.Label(self.task_frame)
-        self.task_preset_label.grid(row=3, column=0, sticky="w", pady=(12, 6))
+        self.task_preset_label.grid(row=0, column=0, sticky="w")
         self.task_preset_combo = ttk.Combobox(self.task_frame, state="readonly", textvariable=self.task_preset_var)
-        self.task_preset_combo.grid(row=3, column=1, sticky="ew", padx=(8, 12), pady=(12, 6))
-
+        self.task_preset_combo.grid(row=0, column=1, sticky="ew", padx=(8, 12))
         self.task_timeout_label = ttk.Label(self.task_frame)
-        self.task_timeout_label.grid(row=3, column=2, sticky="e", pady=(12, 6))
+        self.task_timeout_label.grid(row=0, column=2, sticky="e")
         self.task_timeout_entry = ttk.Entry(self.task_frame, textvariable=self.task_timeout_var, width=10)
-        self.task_timeout_entry.grid(row=3, column=3, sticky="w", padx=(8, 0), pady=(12, 6))
-
+        self.task_timeout_entry.grid(row=0, column=3, sticky="w", padx=(8, 0))
         self.task_command_label = ttk.Label(self.task_frame)
-        self.task_command_label.grid(row=4, column=0, sticky="w", pady=(6, 6))
+        self.task_command_label.grid(row=1, column=0, sticky="w", pady=(10, 0))
         self.task_command_entry = ttk.Entry(self.task_frame, textvariable=self.task_command_var)
-        self.task_command_entry.grid(row=4, column=1, columnspan=3, sticky="ew", padx=(8, 0), pady=(6, 6))
-
-        self.task_execute_button = ttk.Button(self.task_frame, style="Accent.TButton", command=self.execute_task)
-        self.task_execute_button.grid(row=5, column=3, sticky="e", pady=(8, 8))
-        self.task_test_button = ttk.Button(self.task_frame, command=self.test_connection)
-        self.task_test_button.grid(row=5, column=2, sticky="e", padx=(0, 8), pady=(8, 8))
+        self.task_command_entry.grid(row=1, column=1, columnspan=3, sticky="ew", padx=(8, 0), pady=(10, 0))
         self.task_summary_label = ttk.Label(self.task_frame, textvariable=self.task_summary_var, style="Muted.TLabel")
-        self.task_summary_label.grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 8))
-
+        self.task_summary_label.grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        self.task_test_button = ttk.Button(self.task_frame, command=self.test_connection)
+        self.task_test_button.grid(row=2, column=2, sticky="e", padx=(0, 8), pady=(10, 0))
+        self.task_execute_button = ttk.Button(self.task_frame, style="Accent.TButton", command=self.execute_task)
+        self.task_execute_button.grid(row=2, column=3, sticky="e", pady=(10, 0))
         self.task_output = tk.Text(
             self.task_frame,
-            height=8,
+            height=5,
             bg=PALETTE["field"],
             fg=PALETTE["text"],
             insertbackground=PALETTE["accent"],
@@ -355,41 +363,32 @@ class WinConnectorApp:
             relief="flat",
             wrap="word",
         )
-        self.task_output.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(0, 10))
-
+        self.task_output.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(10, 0))
         self.task_history_label = ttk.Label(self.task_frame, style="Section.TLabel")
-        self.task_history_label.grid(row=7, column=0, sticky="w", pady=(0, 6))
+        self.task_history_label.grid(row=4, column=0, sticky="w", pady=(10, 4))
         self.task_history_list = tk.Listbox(
             self.task_frame,
-            height=5,
+            height=4,
             bg=PALETTE["field"],
             fg=PALETTE["text"],
             selectbackground=PALETTE["selection"],
-            selectforeground=PALETTE["bg"],
+            selectforeground=PALETTE["text"],
             relief="flat",
             highlightthickness=1,
             highlightbackground=PALETTE["border"],
         )
-        self.task_history_list.grid(row=8, column=0, columnspan=4, sticky="ew")
+        self.task_history_list.grid(row=5, column=0, columnspan=4, sticky="ew")
 
-        self.empty_label = ttk.Label(main_panel, style="Empty.TLabel", textvariable=self.empty_var, anchor="center")
-        self.empty_label.grid(row=3, column=0, sticky="ew", pady=(10, 0))
-
-        self.button_bar = ttk.Frame(main_panel, style="Panel.TFrame")
-        self.button_bar.grid(row=4, column=0, sticky="ew", pady=(14, 0))
-        self.add_button = ttk.Button(self.button_bar, style="Accent.TButton", command=self.add_connection)
-        self.add_button.pack(side="left")
-        self.edit_button = ttk.Button(self.button_bar, command=self.edit_connection)
-        self.edit_button.pack(side="left", padx=8)
-        self.delete_button = ttk.Button(self.button_bar, style="Danger.TButton", command=self.delete_connection)
-        self.delete_button.pack(side="left")
-        self.connect_button = ttk.Button(self.button_bar, style="Accent.TButton", command=self.connect_connection)
-        self.connect_button.pack(side="right")
-        self.refresh_button = ttk.Button(self.button_bar, command=self.refresh)
-        self.refresh_button.pack(side="right", padx=(0, 8))
-
-        self.status_label = ttk.Label(container, style="Status.TLabel", textvariable=self.status_var, padding=(18, 10))
-        self.status_label.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+    def _add_home_tab(self) -> None:
+        home = ttk.Frame(self.terminal_notebook, style="Panel.TFrame", padding=18)
+        home.columnconfigure(0, weight=1)
+        home.rowconfigure(1, weight=1)
+        ttk.Label(home, text="Session Workspace", style="Brand.TLabel").grid(row=0, column=0, sticky="w")
+        canvas = tk.Canvas(home, bg=PALETTE["panel"], highlightthickness=0, height=260)
+        canvas.grid(row=1, column=0, sticky="nsew", pady=(18, 0))
+        self.terminal_notebook.add(home, text="Home")
+        self.home_canvas = canvas
+        self._draw_home_canvas()
 
     def _bind_events(self) -> None:
         self.search_var.trace_add("write", lambda *_args: self.refresh())
@@ -399,47 +398,39 @@ class WinConnectorApp:
         self.quick_protocol_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_quick_protocol_change())
         self.quick_template_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_quick_template_change())
         self.language_combo.bind("<<ComboboxSelected>>", lambda _event: self._change_language())
-        self.tree.bind("<Double-1>", lambda _event: self.connect_connection())
-        self.tree.bind("<<TreeviewSelect>>", lambda _event: self._on_selected_profile_changed())
+        self.session_tree.bind("<<TreeviewSelect>>", lambda _event: self._on_selected_profile_changed())
+        self.session_tree.bind("<Double-1>", lambda _event: self.open_terminal_tab())
+        self.session_list.bind("<Double-1>", lambda _event: self.open_terminal_tab())
+        self.tree.bind("<<TreeviewSelect>>", lambda _event: self._sync_selection_from_hidden_tree())
         self.task_preset_combo.bind("<<ComboboxSelected>>", lambda _event: self._apply_selected_preset())
         self.task_history_list.bind("<<ListboxSelect>>", lambda _event: self._show_selected_history())
-        self.session_list.bind("<Double-1>", lambda _event: self.open_terminal_tab())
 
     def _apply_text(self) -> None:
         self.root.title(self.title_override or self.i18n.t("app.title"))
         self.brand_label.configure(text=self.i18n.t("app.brand"))
         self.subtitle_label.configure(text=self.i18n.t("app.subtitle"))
         self.language_label.configure(text=self.i18n.t("header.language"))
-        self.quick_frame.configure(text=self.i18n.t("quick.panel"))
         self.quick_title_label.configure(text=self.i18n.t("quick.title"))
-        self.quick_name_label.configure(text=self.i18n.t("editor.name"))
-        self.quick_protocol_label.configure(text=self.i18n.t("editor.protocol_label"))
-        self.quick_template_label.configure(text=self.i18n.t("editor.template"))
-        self.quick_host_label.configure(text=self.i18n.t("editor.host"))
-        self.quick_port_label.configure(text=self.i18n.t("editor.port"))
-        self.quick_group_label.configure(text=self.i18n.t("editor.group"))
-        self.quick_username_label.configure(text=self.i18n.t("editor.username"))
-        self.quick_password_label.configure(text=self.i18n.t("editor.password"))
+        self.quick_name_label.configure(text=self.i18n.t("quick.name_hint"))
+        self.quick_protocol_label.configure(text=self.i18n.t("quick.host_hint"))
+        self.quick_template_label.configure(text=self.i18n.t("quick.port_hint"))
+        self.quick_host_label.configure(text=self.i18n.t("quick.user_hint"))
+        self.quick_port_label.configure(text=self.i18n.t("quick.group_hint"))
+        self.quick_group_label.configure(text=self.i18n.t("quick.add_hint"))
         self.quick_show_password.configure(text=self.i18n.t("editor.show_password"))
         self.quick_add_button.configure(text=self.i18n.t("quick.add"))
+        self.sessions_title.configure(text=self.i18n.t("sessions.library"))
         self.search_label.configure(text=self.i18n.t("header.search"))
         self.search_hint.configure(text=self.i18n.t("header.search_hint"))
-        self.clear_button.configure(text=self.i18n.t("header.clear"))
         self.filters_title.configure(text=self.i18n.t("filters.title"))
         self.protocol_label.configure(text=self.i18n.t("filters.protocol"))
         self.template_label.configure(text=self.i18n.t("filters.template"))
         self.group_label.configure(text=self.i18n.t("filters.group"))
+        self.clear_button.configure(text=self.i18n.t("header.clear"))
         self.filter_summary.configure(text=self.i18n.t("filters.summary"))
         self.group_add_title.configure(text=self.i18n.t("groups.add_title"))
-        self.sessions_title.configure(text=self.i18n.t("sessions.title"))
         self.add_group_button.configure(text="+")
-        self.add_button.configure(text=self.i18n.t("actions.add"))
-        self.edit_button.configure(text=self.i18n.t("actions.edit"))
-        self.delete_button.configure(text=self.i18n.t("actions.delete"))
-        self.connect_button.configure(text=self.i18n.t("actions.connect"))
-        self.refresh_button.configure(text=self.i18n.t("actions.refresh"))
-        self.task_frame.configure(text=self.i18n.t("tasks.panel"))
-        self.task_target_label.configure(text=self.i18n.t("tasks.target"))
+        self.task_target_label.configure(text=self.i18n.t("workspace.title"))
         self.actions_title_label.configure(text=self.i18n.t("actions.panel"))
         self.open_terminal_button.configure(text=self.i18n.t("actions.terminal"))
         self.open_files_button.configure(text=self.i18n.t("actions.files"))
@@ -449,55 +440,45 @@ class WinConnectorApp:
         self.service_remote_host_label.configure(text=self.i18n.t("service.remote_host"))
         self.service_remote_port_label.configure(text=self.i18n.t("service.remote_port"))
         self.start_tunnel_button.configure(text=self.i18n.t("service.start_tunnel"))
+        self.add_button.configure(text=self.i18n.t("actions.add"))
+        self.edit_button.configure(text=self.i18n.t("actions.edit"))
+        self.delete_button.configure(text=self.i18n.t("actions.delete"))
+        self.connect_button.configure(text=self.i18n.t("actions.connect"))
+        self.refresh_button.configure(text=self.i18n.t("actions.refresh"))
         self.task_preset_label.configure(text=self.i18n.t("tasks.preset"))
         self.task_timeout_label.configure(text=self.i18n.t("tasks.timeout"))
         self.task_command_label.configure(text=self.i18n.t("tasks.command"))
         self.task_execute_button.configure(text=self.i18n.t("actions.execute"))
         self.task_test_button.configure(text=self.i18n.t("actions.test"))
         self.task_history_label.configure(text=self.i18n.t("tasks.history"))
-        for column_key in ("name", "protocol", "endpoint", "group", "template", "tags"):
-            self.tree.heading(column_key, text=self.i18n.t(f"table.{column_key}"))
         self._refresh_filter_options()
         self._update_status(0, 0)
         self._refresh_task_panel()
 
-    def _change_language(self) -> None:
-        selected_label = self.language_var.get()
-        selected_language = self.language_label_map.get(selected_label, selected_label)
-        self.i18n.set_language(selected_language)
-        self.language_var.set(self.i18n.t(f"language.{self.i18n.language}"))
-        self._apply_text()
-        self.refresh()
-
     def _refresh_filter_options(self) -> None:
         all_label = self.i18n.t("filters.all")
-
-        protocol_values = [all_label]
         self.protocol_filter_map = {all_label: ALL_FILTER}
+        protocol_values = [all_label]
         for protocol in Protocol:
             label = self.i18n.protocol_text(protocol)
             protocol_values.append(label)
             self.protocol_filter_map[label] = protocol.value
-        current_protocol = self.protocol_filter_map.get(self.protocol_filter_var.get(), self.protocol_filter_var.get())
         self.protocol_combo.configure(values=protocol_values)
-        self.protocol_filter_var.set(self._display_from_value(self.protocol_filter_map, current_protocol))
+        self.protocol_filter_var.set(self._display_from_value(self.protocol_filter_map, self.protocol_filter_map.get(self.protocol_filter_var.get(), self.protocol_filter_var.get())))
 
-        template_values = [all_label]
         self.template_filter_map = {all_label: ALL_FILTER}
+        template_values = [all_label]
         for template in DeviceTemplate:
             label = self.i18n.template_text(template)
             template_values.append(label)
             self.template_filter_map[label] = template.value
-        current_template = self.template_filter_map.get(self.template_filter_var.get(), self.template_filter_var.get())
         self.template_combo.configure(values=template_values)
-        self.template_filter_var.set(self._display_from_value(self.template_filter_map, current_template))
+        self.template_filter_var.set(self._display_from_value(self.template_filter_map, self.template_filter_map.get(self.template_filter_var.get(), self.template_filter_var.get())))
 
         groups = sorted({profile.group for profile in self.all_profiles if profile.group} | self.manual_groups)
-        group_values = [all_label] + groups
         self.group_filter_map = {all_label: ALL_FILTER, **{group: group for group in groups}}
-        current_group = self.group_filter_map.get(self.group_filter_var.get(), self.group_filter_var.get())
-        self.group_combo.configure(values=group_values)
-        self.group_filter_var.set(self._display_from_value(self.group_filter_map, current_group))
+        self.group_combo.configure(values=[all_label] + groups)
+        self.group_filter_var.set(self._display_from_value(self.group_filter_map, self.group_filter_map.get(self.group_filter_var.get(), self.group_filter_var.get())))
 
         self.language_label_map = {self.i18n.t(f"language.{lang}"): lang for lang in SUPPORTED_LANGUAGES}
         self.language_combo.configure(values=list(self.language_label_map.keys()))
@@ -515,46 +496,60 @@ class WinConnectorApp:
         for label, mapped in mapping.items():
             if mapped == value:
                 return label
-        return next(iter(mapping))
+        return next(iter(mapping)) if mapping else value
 
     def refresh(self) -> None:
+        selected_id = self.selected_profile().id if self.selected_profile() else None
         self.all_profiles = self.service.list_connections()
         self._refresh_filter_options()
+        self.visible_profiles = self._filtered_profiles()
+        self._render_session_library()
+        self._render_hidden_table()
+        self._load_recent_tasks()
+        if selected_id and selected_id in {profile.id for profile in self.visible_profiles}:
+            self.select_profile(selected_id)
+        elif self.visible_profiles:
+            self.select_profile(self.visible_profiles[0].id)
+        else:
+            self._on_selected_profile_changed()
+        self.empty_var.set(self.i18n.t("messages.empty") if not self.visible_profiles else "")
+        self._update_status(len(self.visible_profiles), len(self.all_profiles))
 
-        profiles = self._filtered_profiles()
+    def _render_session_library(self) -> None:
+        self.session_node_map.clear()
+        for item in self.session_tree.get_children():
+            self.session_tree.delete(item)
+        groups: dict[str, list[ConnectionProfile]] = {}
+        for profile in self.visible_profiles:
+            groups.setdefault(profile.group or "default", []).append(profile)
+        for group in sorted(groups):
+            group_id = f"group::{group}"
+            self.session_tree.insert("", "end", iid=group_id, text=f"- {group}", open=True)
+            for profile in sorted(groups[group], key=lambda item: item.name.lower()):
+                node_id = f"profile::{profile.id}"
+                text = f"{self._protocol_badge(profile)}  {profile.name}"
+                self.session_tree.insert(group_id, "end", iid=node_id, text=text, values=(self._profile_endpoint(profile),))
+                self.session_node_map[node_id] = profile.id
+        self.session_list.delete(0, "end")
+        for profile in self.visible_profiles:
+            self.session_list.insert("end", f"{self.i18n.protocol_text(profile.protocol)}  {profile.name}  {self._profile_endpoint(profile)}")
+
+    def _render_hidden_table(self) -> None:
         for item in self.tree.get_children():
             self.tree.delete(item)
-
-        for profile in profiles:
+        for profile in self.visible_profiles:
             self.tree.insert(
                 "",
                 "end",
                 iid=profile.id,
-                values=(
-                    profile.name,
-                    self.i18n.protocol_text(profile.protocol),
-                    self._profile_endpoint(profile),
-                    profile.group,
-                    self.i18n.template_text(profile.device_template),
-                    ", ".join(profile.tags),
-                ),
+                values=(profile.name, self.i18n.protocol_text(profile.protocol), self._profile_endpoint(profile), profile.group, self.i18n.template_text(profile.device_template), ", ".join(profile.tags)),
             )
-
-        self.session_list.delete(0, "end")
-        for profile in profiles:
-            self.session_list.insert("end", f"{self.i18n.protocol_text(profile.protocol)}  {profile.name}  {self._profile_endpoint(profile)}")
-
-        self.empty_var.set(self.i18n.t("messages.empty") if not profiles else "")
-        self._update_status(len(profiles), len(self.all_profiles))
-        self._load_recent_tasks()
-        self._on_selected_profile_changed()
 
     def _filtered_profiles(self) -> list[ConnectionProfile]:
         query = self.search_var.get().strip().lower()
         protocol_filter = self.protocol_filter_map.get(self.protocol_filter_var.get(), self.protocol_filter_var.get())
         template_filter = self.template_filter_map.get(self.template_filter_var.get(), self.template_filter_var.get())
         group_filter = self.group_filter_map.get(self.group_filter_var.get(), self.group_filter_var.get())
-
         filtered: list[ConnectionProfile] = []
         for profile in self.all_profiles:
             if protocol_filter != ALL_FILTER and profile.protocol.value != protocol_filter:
@@ -563,20 +558,17 @@ class WinConnectorApp:
                 continue
             if group_filter != ALL_FILTER and profile.group != group_filter:
                 continue
-            searchable = " ".join(
-                [
-                    profile.name,
-                    profile.group,
-                    profile.device_template.value,
-                    " ".join(profile.tags),
-                    profile.notes,
-                    self._profile_endpoint(profile),
-                ]
-            ).lower()
+            searchable = " ".join([profile.name, profile.group, profile.device_template.value, " ".join(profile.tags), profile.notes, self._profile_endpoint(profile)]).lower()
             if query and query not in searchable:
                 continue
             filtered.append(profile)
         return filtered
+
+    def _change_language(self) -> None:
+        selected_label = self.language_var.get()
+        self.i18n.set_language(self.language_label_map.get(selected_label, selected_label))
+        self._apply_text()
+        self.refresh()
 
     def _update_status(self, visible_count: int, total_count: int) -> None:
         self.status_var.set(
@@ -589,7 +581,18 @@ class WinConnectorApp:
         config = profile.protocol_config
         if profile.protocol == Protocol.SERIAL:
             return f"{config.port_name} @ {config.baudrate}"
+        if profile.protocol == Protocol.WEB:
+            return config.url
         return f"{config.host}:{config.port}"
+
+    def _protocol_badge(self, profile: ConnectionProfile) -> str:
+        return {
+            Protocol.SSH: "SSH",
+            Protocol.TELNET: "TEL",
+            Protocol.SERIAL: "COM",
+            Protocol.RDP: "RDP",
+            Protocol.WEB: "WEB",
+        }[profile.protocol]
 
     def _clear_filters(self) -> None:
         self.search_var.set("")
@@ -611,11 +614,7 @@ class WinConnectorApp:
         self._apply_quick_protocol_defaults(Protocol(protocol_value))
 
     def _apply_quick_protocol_defaults(self, protocol: Protocol) -> None:
-        default_ports = {
-            Protocol.SSH: "22",
-            Protocol.TELNET: "23",
-            Protocol.RDP: "3389",
-        }
+        default_ports = {Protocol.SSH: "22", Protocol.TELNET: "23", Protocol.RDP: "3389", Protocol.WEB: "443"}
         if protocol in default_ports:
             self.quick_port_var.set(default_ports[protocol])
         elif protocol == Protocol.SERIAL:
@@ -640,68 +639,63 @@ class WinConnectorApp:
             template_value = self.quick_template_map.get(self.quick_template_var.get(), self.quick_template_var.get())
             protocol = Protocol(protocol_value)
             template = DeviceTemplate(template_value)
-            name = self.quick_name_var.get().strip() or self.quick_host_var.get().strip()
+            endpoint = self.quick_host_var.get().strip()
+            name = self.quick_name_var.get().strip() or endpoint
             group = self.quick_group_var.get().strip() or "default"
             tags = [tag.strip() for tag in self.quick_tags_var.get().split(",") if tag.strip()]
-
-            if protocol == Protocol.SSH:
-                config = SSHConfig(
-                    host=self.quick_host_var.get().strip(),
-                    port=int(self.quick_port_var.get() or 22),
-                    username=self.quick_username_var.get().strip(),
-                    password=self.quick_password_var.get(),
-                )
-            elif protocol == Protocol.TELNET:
-                config = TelnetConfig(
-                    host=self.quick_host_var.get().strip(),
-                    port=int(self.quick_port_var.get() or 23),
-                    username=self.quick_username_var.get().strip(),
-                    password=self.quick_password_var.get(),
-                )
-            elif protocol == Protocol.RDP:
-                config = RDPConfig(
-                    host=self.quick_host_var.get().strip(),
-                    port=int(self.quick_port_var.get() or 3389),
-                    username=self.quick_username_var.get().strip(),
-                )
-            else:
-                config = SerialConfig(
-                    port_name=self.quick_host_var.get().strip() or "COM1",
-                    baudrate=int(self.quick_port_var.get() or 9600),
-                )
-
+            config = self._quick_config(protocol, endpoint)
             created = self.service.create_connection(
-                ConnectionCreateRequest(
-                    name=name,
-                    protocol=protocol,
-                    group=group,
-                    tags=tags,
-                    notes="",
-                    device_template=template,
-                    protocol_config=config,
-                )
+                ConnectionCreateRequest(name=name, protocol=protocol, group=group, tags=tags, notes="", device_template=template, protocol_config=config)
             )
             self.quick_name_var.set("")
             self.quick_host_var.set("")
             self.quick_password_var.set("")
             self.refresh()
-            self.tree.selection_set(created.id)
-            self.tree.see(created.id)
+            self.select_profile(created.id)
+            self.action_status_var.set("Profile added. Double-click it in the Session Library or press Terminal.")
         except Exception as exc:
             messagebox.showerror(self.i18n.t("messages.validation_error"), str(exc), parent=self.root)
 
+    def _quick_config(self, protocol: Protocol, endpoint: str):
+        if protocol == Protocol.SSH:
+            return SSHConfig(host=endpoint, port=int(self.quick_port_var.get() or 22), username=self.quick_username_var.get().strip(), password=self.quick_password_var.get())
+        if protocol == Protocol.TELNET:
+            return TelnetConfig(host=endpoint, port=int(self.quick_port_var.get() or 23), username=self.quick_username_var.get().strip(), password=self.quick_password_var.get())
+        if protocol == Protocol.RDP:
+            return RDPConfig(host=endpoint, port=int(self.quick_port_var.get() or 3389), username=self.quick_username_var.get().strip())
+        if protocol == Protocol.WEB:
+            url = endpoint if endpoint.startswith(("http://", "https://")) else f"https://{endpoint}"
+            return WebConfig(url=url, username=self.quick_username_var.get().strip(), password=self.quick_password_var.get())
+        return SerialConfig(port_name=endpoint or "COM1", baudrate=int(self.quick_port_var.get() or 9600))
+
     def selected_profile(self) -> ConnectionProfile | None:
+        tree_selection = self.session_tree.selection() if hasattr(self, "session_tree") else ()
+        if tree_selection:
+            profile_id = self.session_node_map.get(tree_selection[0])
+            if profile_id:
+                return self.service.get_connection(profile_id)
+        hidden_selection = self.tree.selection() if hasattr(self, "tree") else ()
+        if hidden_selection:
+            return self.service.get_connection(hidden_selection[0])
+        list_selection = self.session_list.curselection() if hasattr(self, "session_list") else ()
+        if list_selection and list_selection[0] < len(self.visible_profiles):
+            return self.visible_profiles[list_selection[0]]
+        return None
+
+    def select_profile(self, profile_id: str) -> None:
+        node_id = f"profile::{profile_id}"
+        if self.session_tree.exists(node_id):
+            self.session_tree.selection_set(node_id)
+            self.session_tree.see(node_id)
+        if self.tree.exists(profile_id):
+            self.tree.selection_set(profile_id)
+            self.tree.see(profile_id)
+        self._on_selected_profile_changed()
+
+    def _sync_selection_from_hidden_tree(self) -> None:
         selection = self.tree.selection()
         if selection:
-            return self.service.get_connection(selection[0])
-        list_selection = self.session_list.curselection()
-        if list_selection:
-            profiles = self._filtered_profiles()
-            if list_selection[0] < len(profiles):
-                profile = profiles[list_selection[0]]
-                self.tree.selection_set(profile.id)
-                return profile
-        return None
+            self.select_profile(selection[0])
 
     def _ssh_target(self, profile: ConnectionProfile) -> str:
         config = profile.protocol_config
@@ -712,29 +706,26 @@ class WinConnectorApp:
     def _terminal_command(self, profile: ConnectionProfile) -> list[str]:
         config = profile.protocol_config
         if profile.protocol == Protocol.SSH:
-            assert isinstance(config, SSHConfig)
             command = ["ssh", "-p", str(config.port)]
             if config.private_key_path:
                 command.extend(["-i", config.private_key_path])
             command.append(self._ssh_target(profile))
             return command
         if profile.protocol == Protocol.RDP:
-            assert isinstance(config, RDPConfig)
             host_spec = config.host if config.port == 3389 else f"{config.host}:{config.port}"
             return ["mstsc", "/v:" + host_spec]
         if profile.protocol == Protocol.TELNET:
-            assert isinstance(config, TelnetConfig)
             return ["telnet", config.host, str(config.port)]
         if profile.protocol == Protocol.SERIAL:
-            assert isinstance(config, SerialConfig)
             return ["mode", config.port_name]
+        if profile.protocol == Protocol.WEB:
+            return [config.url]
         raise RuntimeError(f"Unsupported protocol: {profile.protocol}")
 
     def _files_command(self, profile: ConnectionProfile) -> list[str]:
         config = profile.protocol_config
         if profile.protocol != Protocol.SSH:
             raise RuntimeError("File browser is available for SSH profiles through SFTP.")
-        assert isinstance(config, SSHConfig)
         command = ["sftp", "-P", str(config.port)]
         if config.private_key_path:
             command.extend(["-i", config.private_key_path])
@@ -745,7 +736,6 @@ class WinConnectorApp:
         config = profile.protocol_config
         if profile.protocol != Protocol.SSH:
             raise RuntimeError("Service tunnels require an SSH profile.")
-        assert isinstance(config, SSHConfig)
         local_port = int(self.service_local_port_var.get() or "8080")
         remote_host = self.service_remote_host_var.get().strip() or "127.0.0.1"
         remote_port = int(self.service_remote_port_var.get() or "80")
@@ -758,7 +748,7 @@ class WinConnectorApp:
     def _selected_or_message(self) -> ConnectionProfile | None:
         profile = self.selected_profile()
         if profile is None:
-            messagebox.showinfo(self.i18n.t("messages.select_title"), self.i18n.t("messages.select_body"))
+            messagebox.showinfo(self.i18n.t("messages.select_title"), self.i18n.t("messages.select_body"), parent=self.root)
             return None
         return profile
 
@@ -769,14 +759,43 @@ class WinConnectorApp:
         profile = self._selected_or_message()
         if profile is None:
             return
+        if profile.protocol == Protocol.RDP:
+            result = open_rdp_external(profile)
+            self.action_status_var.set(result.message)
+            return
+        if profile.protocol == Protocol.WEB:
+            result = open_web_external(profile)
+            self.action_status_var.set(result.message)
+            return
+        existing = self.active_tab_frames.get(profile.id)
+        if existing is not None and str(existing) in self.terminal_notebook.tabs():
+            self.terminal_notebook.select(existing)
+            return
         tab = ttk.Frame(self.terminal_notebook, style="Panel.TFrame")
         tab.columnconfigure(0, weight=1)
         tab.rowconfigure(0, weight=1)
         title = f"{profile.name} [{profile.protocol.value}]"
         self.terminal_notebook.add(tab, text=title)
         self.terminal_notebook.select(tab)
+        self.active_tab_frames[profile.id] = tab
         start_gui_session_tab(profile, tab)
         self.action_status_var.set(self.i18n.t("actions.started", action=self.i18n.t("actions.terminal")))
+
+    def close_current_tab(self) -> None:
+        selected = self.terminal_notebook.select()
+        if not selected:
+            return
+        tab_text = self.terminal_notebook.tab(selected, "text")
+        if tab_text == "Home":
+            return
+        widget = self.root.nametowidget(selected)
+        close = getattr(widget, "_session_close", None)
+        if close:
+            close()
+        self.terminal_notebook.forget(selected)
+        for profile_id, frame in list(self.active_tab_frames.items()):
+            if str(frame) == selected:
+                self.active_tab_frames.pop(profile_id, None)
 
     def open_files(self) -> None:
         profile = self._selected_or_message()
@@ -813,8 +832,16 @@ class WinConnectorApp:
         profile = self.selected_profile()
         if profile is None:
             self.task_target_var.set(self.i18n.t("tasks.no_selection"))
+            self.detail_name_var.set("No Session")
+            self.detail_endpoint_var.set("")
+            self.detail_meta_var.set("")
+            self.detail_notes_var.set("")
         else:
             self.task_target_var.set(f"{profile.name} [{self.i18n.protocol_text(profile.protocol)}]")
+            self.detail_name_var.set(profile.name)
+            self.detail_endpoint_var.set(self._profile_endpoint(profile))
+            self.detail_meta_var.set(f"{profile.group} / {self.i18n.template_text(profile.device_template)} / {', '.join(profile.tags) or 'no tags'}")
+            self.detail_notes_var.set(profile.notes or "No notes saved.")
         self._refresh_task_panel()
 
     def _refresh_task_panel(self) -> None:
@@ -827,10 +854,7 @@ class WinConnectorApp:
             return
         presets = self.task_service.presets(profile.device_template)
         if presets:
-            self.task_preset_map = {
-                f"{item['title']} / {item['title_zh']}": str(item["id"])
-                for item in presets
-            }
+            self.task_preset_map = {f"{item['title']} / {item['title_zh']}": str(item["id"]) for item in presets}
         else:
             self.task_preset_map = {self.i18n.t("tasks.no_presets"): ""}
         values = list(self.task_preset_map.keys())
@@ -882,98 +906,66 @@ class WinConnectorApp:
     def execute_task(self) -> None:
         profile = self.selected_profile()
         if not profile:
-            messagebox.showinfo(self.i18n.t("messages.select_title"), self.i18n.t("messages.select_body"))
+            messagebox.showinfo(self.i18n.t("messages.select_title"), self.i18n.t("messages.select_body"), parent=self.root)
             return
         try:
             timeout = float(self.task_timeout_var.get() or "10")
             preset_id = self.task_preset_map.get(self.task_preset_var.get(), "") or None
-            result = self.task_service.execute(
-                profile,
-                TaskExecuteRequest(
-                    connection_id=profile.id,
-                    command=self.task_command_var.get(),
-                    preset_id=preset_id,
-                    timeout=timeout,
-                ),
-            )
-            self.task_summary_var.set(
-                self.i18n.t("tasks.summary_result", status=result.status, duration=result.duration_ms)
-            )
-            self._set_task_output(
-                f"status: {result.status}\nexit_code: {result.exit_code}\nprotocol: {result.protocol.value}\n\nstdout:\n{result.stdout}\n\nstderr:\n{result.stderr}"
-            )
+            result = self.task_service.execute(profile, TaskExecuteRequest(connection_id=profile.id, command=self.task_command_var.get(), preset_id=preset_id, timeout=timeout))
+            self.task_summary_var.set(self.i18n.t("tasks.summary_result", status=result.status, duration=result.duration_ms))
+            self._set_task_output(f"status: {result.status}\nexit_code: {result.exit_code}\nprotocol: {result.protocol.value}\n\nstdout:\n{result.stdout}\n\nstderr:\n{result.stderr}")
             self._load_recent_tasks()
         except Exception as exc:
-            messagebox.showerror(self.i18n.t("messages.connect_error"), str(exc))
+            messagebox.showerror(self.i18n.t("messages.connect_error"), str(exc), parent=self.root)
 
     def test_connection(self) -> None:
         profile = self.selected_profile()
         if not profile:
-            messagebox.showinfo(self.i18n.t("messages.select_title"), self.i18n.t("messages.select_body"))
+            messagebox.showinfo(self.i18n.t("messages.select_title"), self.i18n.t("messages.select_body"), parent=self.root)
             return
         try:
             timeout = ConnectionTestRequest(timeout=float(self.task_timeout_var.get() or "5")).timeout
             result = self.task_service.test(profile, timeout=timeout)
-            self.task_summary_var.set(
-                self.i18n.t("tasks.summary_test", reachable=str(result.reachable), authenticated=str(result.authenticated))
-            )
-            self._set_task_output(
-                f"reachable: {result.reachable}\nauthenticated: {result.authenticated}\nprotocol: {result.protocol.value}\nmessage: {result.message}\nerror: {result.error}"
-            )
+            self.task_summary_var.set(self.i18n.t("tasks.summary_test", reachable=str(result.reachable), authenticated=str(result.authenticated)))
+            self._set_task_output(f"reachable: {result.reachable}\nauthenticated: {result.authenticated}\nprotocol: {result.protocol.value}\nmessage: {result.message}\nerror: {result.error}")
             self._load_recent_tasks()
         except Exception as exc:
-            messagebox.showerror(self.i18n.t("messages.connect_error"), str(exc))
+            messagebox.showerror(self.i18n.t("messages.connect_error"), str(exc), parent=self.root)
 
     def add_connection(self) -> None:
         editor = ConnectionEditor(self.root, self.i18n)
         profile = editor.open()
         if profile:
-            self.service.create_connection(profile)
+            created = self.service.create_connection(profile)
             self.refresh()
+            self.select_profile(created.id)
 
     def edit_connection(self) -> None:
         selected = self.selected_profile()
         if not selected:
-            messagebox.showinfo(self.i18n.t("messages.select_title"), self.i18n.t("messages.select_body"))
+            messagebox.showinfo(self.i18n.t("messages.select_title"), self.i18n.t("messages.select_body"), parent=self.root)
             return
         editor = ConnectionEditor(self.root, self.i18n, selected)
         request = editor.open()
         if request:
             self.service.update_connection(
                 selected.id,
-                ConnectionUpdateRequest(
-                    name=request.name,
-                    protocol=request.protocol,
-                    group=request.group,
-                    tags=request.tags,
-                    notes=request.notes,
-                    device_template=request.device_template,
-                    protocol_config=request.protocol_config,
-                ),
+                ConnectionUpdateRequest(name=request.name, protocol=request.protocol, group=request.group, tags=request.tags, notes=request.notes, device_template=request.device_template, protocol_config=request.protocol_config),
             )
             self.refresh()
+            self.select_profile(selected.id)
 
     def delete_connection(self) -> None:
         selected = self.selected_profile()
         if not selected:
-            messagebox.showinfo(self.i18n.t("messages.select_title"), self.i18n.t("messages.select_body"))
+            messagebox.showinfo(self.i18n.t("messages.select_title"), self.i18n.t("messages.select_body"), parent=self.root)
             return
-        if messagebox.askyesno(
-            self.i18n.t("messages.delete_title"),
-            self.i18n.t("messages.delete_confirm", name=selected.name),
-        ):
+        if messagebox.askyesno(self.i18n.t("messages.delete_title"), self.i18n.t("messages.delete_confirm", name=selected.name), parent=self.root):
             self.service.delete_connection(selected.id)
             self.refresh()
 
     def connect_connection(self) -> None:
-        selected = self.selected_profile()
-        if not selected:
-            messagebox.showinfo(self.i18n.t("messages.select_title"), self.i18n.t("messages.select_body"))
-            return
-        try:
-            self.launcher.connect(selected, root=self.root)
-        except Exception as exc:
-            messagebox.showerror(self.i18n.t("messages.connect_error"), str(exc))
+        self.open_terminal_tab()
 
     def run(self) -> None:
         self.root.mainloop()
@@ -983,12 +975,31 @@ class WinConnectorApp:
             return
         width = max(self.header_canvas.winfo_width(), 1)
         self.header_canvas.delete("pulse")
-        offset = (self.motion_phase * 17) % max(width, 1)
-        self.header_canvas.create_rectangle(0, 1, width, 3, fill=PALETTE["border"], outline="", tags="pulse")
-        self.header_canvas.create_rectangle(offset - 120, 0, offset, 4, fill=PALETTE["accent"], outline="", tags="pulse")
-        self.header_canvas.create_rectangle(offset, 0, offset + 36, 4, fill=PALETTE["hot"], outline="", tags="pulse")
+        offset = (self.motion_phase * 18) % max(width, 1)
+        self.header_canvas.create_rectangle(0, 17, width, 19, fill=PALETTE["border"], outline="", tags="pulse")
+        self.header_canvas.create_rectangle(offset - 150, 15, offset, 21, fill=PALETTE["accent"], outline="", tags="pulse")
+        self.header_canvas.create_rectangle(offset, 13, offset + 46, 23, fill=PALETTE["hot"], outline="", tags="pulse")
         self.motion_phase += 1
-        self.root.after(70, self._pulse_header)
+        self._draw_home_canvas()
+        self.root.after(80, self._pulse_header)
+
+    def _draw_home_canvas(self) -> None:
+        if not hasattr(self, "home_canvas") or not self.home_canvas.winfo_exists():
+            return
+        canvas = self.home_canvas
+        width = max(canvas.winfo_width(), 900)
+        height = max(canvas.winfo_height(), 240)
+        canvas.delete("all")
+        for i in range(0, width, 34):
+            color = PALETTE["border"] if i % 68 == 0 else "#132235"
+            canvas.create_line(i, 0, i - 120, height, fill=color)
+        for y in range(30, height, 42):
+            canvas.create_line(0, y, width, y, fill="#132235")
+        pulse = (self.motion_phase * 11) % width
+        canvas.create_rectangle(0, height - 34, width, height, fill="#07111f", outline="")
+        canvas.create_rectangle(pulse - 180, height - 34, pulse, height, fill=PALETTE["selection"], outline="")
+        canvas.create_text(28, 34, anchor="w", fill=PALETTE["text"], font=("Segoe UI Semibold", 18), text="Session Workspace")
+        canvas.create_text(28, 70, anchor="w", fill=PALETTE["muted"], font=("Segoe UI", 10), text="Terminal tabs, profile actions, and task output stay in one operator surface.")
 
 
 class ConnectionEditor:
@@ -1012,6 +1023,7 @@ class ConnectionEditor:
             "template": tk.StringVar(value=(existing.device_template.value if existing else DeviceTemplate.LINUX.value)),
             "protocol": tk.StringVar(value=(existing.protocol.value if existing else Protocol.SSH.value)),
             "host": tk.StringVar(value=getattr(existing_config, "host", "")),
+            "url": tk.StringVar(value=getattr(existing_config, "url", "")),
             "port": tk.StringVar(value=str(getattr(existing_config, "port", 22))),
             "username": tk.StringVar(value=getattr(existing_config, "username", "")),
             "password": tk.StringVar(value=getattr(existing_config, "password", "")),
@@ -1042,43 +1054,25 @@ class ConnectionEditor:
         general.grid(row=0, column=0, sticky="ew")
         general.columnconfigure(1, weight=1)
         general.columnconfigure(3, weight=1)
-
-        ttk.Label(general, text=self.i18n.t("editor.general_hint"), style="Muted.TLabel", wraplength=640, justify="left").grid(
-            row=0, column=0, columnspan=4, sticky="w", pady=(0, 12)
-        )
-
+        ttk.Label(general, text=self.i18n.t("editor.general_hint"), style="Muted.TLabel", wraplength=640, justify="left").grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 12))
         self._entry_row(general, 1, 0, self.i18n.t("editor.name"), self.vars["name"])
         self._entry_row(general, 1, 2, self.i18n.t("editor.group"), self.vars["group"])
         self._entry_row(general, 2, 0, self.i18n.t("editor.tags"), self.vars["tags"])
         ttk.Label(general, text=self.i18n.t("editor.tags_hint"), style="Muted.TLabel").grid(row=3, column=1, sticky="w", pady=(2, 0))
-
         ttk.Label(general, text=self.i18n.t("editor.template")).grid(row=2, column=2, sticky="w", padx=(16, 8))
-        self.template_combo = ttk.Combobox(
-            general,
-            state="readonly",
-            textvariable=self.template_selector_var,
-            values=list(self.template_display_map.keys()),
-        )
+        self.template_combo = ttk.Combobox(general, state="readonly", textvariable=self.template_selector_var, values=list(self.template_display_map.keys()))
         self.template_combo.grid(row=2, column=3, sticky="ew")
         self.template_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_template_change())
 
         protocol_box = ttk.LabelFrame(frame, text=self.i18n.t("editor.protocol"), padding=14)
         protocol_box.grid(row=1, column=0, sticky="nsew", pady=(16, 0))
         protocol_box.columnconfigure(1, weight=1)
-
         ttk.Label(protocol_box, text=self.i18n.t("editor.protocol_label")).grid(row=0, column=0, sticky="w", padx=(0, 8))
-        self.protocol_combo = ttk.Combobox(
-            protocol_box,
-            state="readonly",
-            textvariable=self.protocol_selector_var,
-            values=list(self.protocol_display_map.keys()),
-        )
+        self.protocol_combo = ttk.Combobox(protocol_box, state="readonly", textvariable=self.protocol_selector_var, values=list(self.protocol_display_map.keys()))
         self.protocol_combo.grid(row=0, column=1, sticky="ew")
         self.protocol_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_protocol_change())
-
         self.protocol_hint = ttk.Label(protocol_box, style="Muted.TLabel", wraplength=620, justify="left")
         self.protocol_hint.grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 12))
-
         self.protocol_frame = ttk.Frame(protocol_box, style="Panel.TFrame")
         self.protocol_frame.grid(row=2, column=0, columnspan=2, sticky="nsew")
         self.protocol_frame.columnconfigure(1, weight=1)
@@ -1087,21 +1081,8 @@ class ConnectionEditor:
         notes_box.grid(row=2, column=0, sticky="nsew", pady=(16, 0))
         notes_box.columnconfigure(0, weight=1)
         notes_box.rowconfigure(1, weight=1)
-
-        ttk.Label(notes_box, text=self.i18n.t("editor.notes_hint"), style="Muted.TLabel", wraplength=640, justify="left").grid(
-            row=0, column=0, sticky="w", pady=(0, 10)
-        )
-        self.notes_text = tk.Text(
-            notes_box,
-            height=6,
-            bg=PALETTE["field"],
-            fg=PALETTE["text"],
-            insertbackground=PALETTE["accent"],
-            highlightthickness=1,
-            highlightbackground=PALETTE["border"],
-            relief="flat",
-            wrap="word",
-        )
+        ttk.Label(notes_box, text=self.i18n.t("editor.notes_hint"), style="Muted.TLabel", wraplength=640, justify="left").grid(row=0, column=0, sticky="w", pady=(0, 10))
+        self.notes_text = tk.Text(notes_box, height=6, bg=PALETTE["field"], fg=PALETTE["text"], insertbackground=PALETTE["accent"], highlightthickness=1, highlightbackground=PALETTE["border"], relief="flat", wrap="word")
         self.notes_text.grid(row=1, column=0, sticky="nsew")
         if self.existing:
             self.notes_text.insert("1.0", self.existing.notes)
@@ -1143,6 +1124,8 @@ class ConnectionEditor:
             self.vars["port"].set("23")
         elif protocol == Protocol.RDP and not self.vars["port"].get():
             self.vars["port"].set("3389")
+        elif protocol == Protocol.WEB and not self.vars["url"].get():
+            self.vars["url"].set("https://")
         elif protocol == Protocol.SERIAL and not self.vars["baudrate"].get():
             self.vars["baudrate"].set("9600")
 
@@ -1155,24 +1138,15 @@ class ConnectionEditor:
 
         protocol = Protocol(self.vars["protocol"].get())
         self.protocol_hint.configure(text=self.i18n.t(f"editor.protocol_hint.{protocol.value}"))
-
-        fields: list[tuple[str, str]] = [
-            (self.i18n.t("editor.host"), "host"),
-            (self.i18n.t("editor.port"), "port"),
-        ]
+        fields: list[tuple[str, str]] = [(self.i18n.t("editor.host"), "host"), (self.i18n.t("editor.port"), "port")]
         if protocol == Protocol.SSH:
             fields.append((self.i18n.t("editor.private_key"), "private_key_path"))
         elif protocol == Protocol.SERIAL:
-            fields = [
-                (self.i18n.t("editor.port_name"), "port_name"),
-                (self.i18n.t("editor.baudrate"), "baudrate"),
-            ]
+            fields = [(self.i18n.t("editor.port_name"), "port_name"), (self.i18n.t("editor.baudrate"), "baudrate")]
         elif protocol == Protocol.RDP:
-            fields = [
-                (self.i18n.t("editor.host"), "host"),
-                (self.i18n.t("editor.port"), "port"),
-                (self.i18n.t("editor.username"), "username"),
-            ]
+            fields = [(self.i18n.t("editor.host"), "host"), (self.i18n.t("editor.port"), "port"), (self.i18n.t("editor.username"), "username")]
+        elif protocol == Protocol.WEB:
+            fields = [(self.i18n.t("editor.url"), "url"), (self.i18n.t("editor.username"), "username")]
 
         for row, (label_text, key) in enumerate(fields):
             label = ttk.Label(self.protocol_frame, text=label_text)
@@ -1181,45 +1155,24 @@ class ConnectionEditor:
             entry.grid(row=row, column=1, sticky="ew", pady=6)
             self.protocol_fields.extend([label, entry])
 
-        if protocol in {Protocol.SSH, Protocol.TELNET}:
+        if protocol in {Protocol.SSH, Protocol.TELNET, Protocol.WEB}:
             row = len(fields)
             credentials = ttk.LabelFrame(self.protocol_frame, text=self.i18n.t("editor.credentials"), padding=12)
             credentials.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(10, 0))
             credentials.columnconfigure(1, weight=1)
-            hint = ttk.Label(
-                credentials,
-                text=self.i18n.t("editor.credentials_hint"),
-                style="Muted.TLabel",
-                wraplength=560,
-                justify="left",
-            )
+            hint = ttk.Label(credentials, text=self.i18n.t("editor.credentials_hint"), style="Muted.TLabel", wraplength=560, justify="left")
             hint.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
             username_label = ttk.Label(credentials, text=self.i18n.t("editor.username"))
             username_entry = ttk.Entry(credentials, textvariable=self.vars["username"])
             password_label = ttk.Label(credentials, text=self.i18n.t("editor.password"))
             self.password_entry = ttk.Entry(credentials, textvariable=self.vars["password"], show="*")
-            self.password_toggle = ttk.Checkbutton(
-                credentials,
-                text=self.i18n.t("editor.show_password"),
-                variable=self.show_password_var,
-                command=self._sync_password_visibility,
-            )
+            self.password_toggle = ttk.Checkbutton(credentials, text=self.i18n.t("editor.show_password"), variable=self.show_password_var, command=self._sync_password_visibility)
             username_label.grid(row=1, column=0, sticky="w", padx=(0, 10), pady=6)
             username_entry.grid(row=1, column=1, sticky="ew", pady=6)
             password_label.grid(row=2, column=0, sticky="w", padx=(0, 10), pady=6)
             self.password_entry.grid(row=2, column=1, sticky="ew", pady=6)
             self.password_toggle.grid(row=3, column=1, sticky="w", pady=(2, 0))
-            self.protocol_fields.extend(
-                [
-                    credentials,
-                    hint,
-                    username_label,
-                    username_entry,
-                    password_label,
-                    self.password_entry,
-                    self.password_toggle,
-                ]
-            )
+            self.protocol_fields.extend([credentials, hint, username_label, username_entry, password_label, self.password_entry, self.password_toggle])
             self._sync_password_visibility()
 
     def _sync_password_visibility(self) -> None:
@@ -1232,31 +1185,15 @@ class ConnectionEditor:
             template = DeviceTemplate(self.vars["template"].get())
             notes = self.notes_text.get("1.0", "end").strip()
             if protocol == Protocol.SSH:
-                config = SSHConfig(
-                    host=self.vars["host"].get(),
-                    port=int(self.vars["port"].get() or 22),
-                    username=self.vars["username"].get(),
-                    password=self.vars["password"].get(),
-                    private_key_path=self.vars["private_key_path"].get(),
-                )
+                config = SSHConfig(host=self.vars["host"].get(), port=int(self.vars["port"].get() or 22), username=self.vars["username"].get(), password=self.vars["password"].get(), private_key_path=self.vars["private_key_path"].get())
             elif protocol == Protocol.TELNET:
-                config = TelnetConfig(
-                    host=self.vars["host"].get(),
-                    port=int(self.vars["port"].get() or 23),
-                    username=self.vars["username"].get(),
-                    password=self.vars["password"].get(),
-                )
+                config = TelnetConfig(host=self.vars["host"].get(), port=int(self.vars["port"].get() or 23), username=self.vars["username"].get(), password=self.vars["password"].get())
             elif protocol == Protocol.SERIAL:
-                config = SerialConfig(
-                    port_name=self.vars["port_name"].get(),
-                    baudrate=int(self.vars["baudrate"].get() or 9600),
-                )
+                config = SerialConfig(port_name=self.vars["port_name"].get(), baudrate=int(self.vars["baudrate"].get() or 9600))
+            elif protocol == Protocol.WEB:
+                config = WebConfig(url=self.vars["url"].get(), username=self.vars["username"].get(), password=self.vars["password"].get())
             else:
-                config = RDPConfig(
-                    host=self.vars["host"].get(),
-                    port=int(self.vars["port"].get() or 3389),
-                    username=self.vars["username"].get(),
-                )
+                config = RDPConfig(host=self.vars["host"].get(), port=int(self.vars["port"].get() or 3389), username=self.vars["username"].get())
             self.result = ConnectionCreateRequest(
                 name=self.vars["name"].get(),
                 protocol=protocol,

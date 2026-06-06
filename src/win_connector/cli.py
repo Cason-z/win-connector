@@ -18,6 +18,7 @@ from win_connector.models import (
     SerialConfig,
     TaskExecuteRequest,
     TelnetConfig,
+    WebConfig,
 )
 from win_connector.service import ConnectionService
 from win_connector.storage import JSONStorage
@@ -79,6 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_parser.add_argument("--tags", default="")
     add_parser.add_argument("--notes", default="")
     add_parser.add_argument("--host", default="")
+    add_parser.add_argument("--url", default="")
     add_parser.add_argument("--port", type=int)
     add_parser.add_argument("--username", default="")
     add_parser.add_argument("--password", default="")
@@ -135,6 +137,11 @@ def build_request_from_args(args) -> ConnectionCreateRequest:
         )
     elif protocol == Protocol.SERIAL:
         config = SerialConfig(port_name=args.port_name, baudrate=args.baudrate)
+    elif protocol == Protocol.WEB:
+        url = args.url or args.host
+        if url and not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        config = WebConfig(url=url or "https://127.0.0.1", username=args.username, password=args.password)
     else:
         config = RDPConfig(host=args.host, port=args.port or 3389, username=args.username)
     return ConnectionCreateRequest(
@@ -155,6 +162,8 @@ def _default_template(protocol: Protocol) -> DeviceTemplate:
         return DeviceTemplate.CISCO_IOS
     if protocol == Protocol.SERIAL:
         return DeviceTemplate.SERIAL_CONSOLE
+    if protocol == Protocol.WEB:
+        return DeviceTemplate.WEB_APP
     return DeviceTemplate.FIREWALL_GENERIC
 
 

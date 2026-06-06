@@ -143,6 +143,25 @@ class WinConnectorAppQuickAddTests(unittest.TestCase):
 
         self.assertGreater(self.app.session_list.size(), 0)
         self.assertIn("Jump Host", self.app.session_list.get(0))
+        self.assertTrue(hasattr(self.app, "session_tree"))
+        self.assertTrue(self.app.session_tree.exists("profile::" + self.app.service.list_connections()[0].id))
+
+    def test_quick_add_creates_web_profile_for_stored_web_sessions(self) -> None:
+        self.app.quick_protocol_var.set(self.app._display_from_value(self.app.quick_protocol_map, Protocol.WEB.value))
+        self.app.quick_template_var.set(self.app._display_from_value(self.app.quick_template_map, DeviceTemplate.WEB_APP.value))
+        self.app.quick_name_var.set("Router UI")
+        self.app.quick_host_var.set("10.0.0.1")
+        self.app.quick_username_var.set("admin")
+        self.app.quick_password_var.set("secret")
+
+        self.app.quick_add_connection()
+
+        profile = self.app.service.list_connections()[0]
+        self.assertEqual(profile.protocol, Protocol.WEB)
+        self.assertEqual(profile.device_template, DeviceTemplate.WEB_APP)
+        self.assertEqual(profile.protocol_config.url, "https://10.0.0.1")
+        self.assertEqual(profile.protocol_config.username, "admin")
+        self.assertEqual(profile.protocol_config.password, "secret")
 
     def test_open_terminal_tab_embeds_session_in_workspace(self) -> None:
         self.create_ssh_profile()

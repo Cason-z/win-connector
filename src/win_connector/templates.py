@@ -8,6 +8,7 @@ from win_connector.models import (
     SSHConfig,
     SerialConfig,
     TelnetConfig,
+    WebConfig,
 )
 
 
@@ -19,6 +20,7 @@ TEMPLATE_PROTOCOL_MAP: dict[DeviceTemplate, Protocol] = {
     DeviceTemplate.JUNIPER: Protocol.SSH,
     DeviceTemplate.FIREWALL_GENERIC: Protocol.SSH,
     DeviceTemplate.SERIAL_CONSOLE: Protocol.SERIAL,
+    DeviceTemplate.WEB_APP: Protocol.WEB,
 }
 
 
@@ -42,8 +44,10 @@ def build_template_request(
         config = TelnetConfig(host=host or "127.0.0.1", username=username, password=password)
     elif protocol == Protocol.SERIAL:
         config = SerialConfig(port_name=port_name)
-    else:
+    elif protocol == Protocol.RDP:
         config = RDPConfig(host=host or "127.0.0.1", username=username)
+    else:
+        config = WebConfig(url=host or "http://127.0.0.1", username=username, password=password)
 
     return ConnectionCreateRequest(
         name=name,

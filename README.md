@@ -1,25 +1,27 @@
 # Win Connector
 
-Win Connector is a local network operations connection hub for Windows-oriented operators, agents, and skills. It keeps the original bilingual cyber-style GUI, while adding structured task execution, task history, connection testing, and agent-friendly HTTP APIs.
+Win Connector is a local session workspace for Windows-oriented operators, agents, and skills. The Windows GUI now follows a MobaXterm/XPipe-style workflow: a persistent session library on the left, embedded terminal tabs in the center, and profile details plus launch actions on the right.
 
 ## Positioning
 
-- Local connection hub for `SSH`, `Telnet`, `Serial (COM)`, and `RDP`
-- Usable by humans through a bilingual (`简体中文` / `English`) sci-fi GUI
+- Local connection hub for `SSH`, `Telnet`, `Serial (COM)`, `RDP`, and stored `Web` sessions
+- Usable by humans through a bilingual (`????` / `English`) sci-fi GUI
 - Usable by large models, agents, and skills through structured local HTTP APIs and JSON-first CLI commands
 - Designed for device inspection flows: connection profiles, device templates, command presets, and recent task history
 
 ## Features
 
 - Save and manage connection profiles in local JSON
-- Device templates: `linux`, `cisco_ios`, `h3c`, `huawei`, `juniper`, `firewall_generic`, `serial_console`
+- Device templates: `linux`, `cisco_ios`, `h3c`, `huawei`, `juniper`, `firewall_generic`, `serial_console`, `web_app`
 - Launch interactive connections:
   - `SSH` / `Telnet` / `Serial`: embedded GUI session or CLI inline session
   - `RDP`: launch Windows `mstsc`
+  - `Web`: open saved URLs in the system browser with local username/password storage
 - Execute automation tasks:
   - `SSH` / `Telnet`: execute a single command and return structured output
   - `Serial`: send text and read response with timeout
   - `RDP`: return structured unsupported result for remote command execution
+  - `Web`: return structured unsupported result for shell command execution
 - Save recent task history locally
 - Test connections through CLI/API/GUI
 - Built-in command presets for common device templates
@@ -104,15 +106,15 @@ python -m win_connector gui --lang en-US
 
 GUI capabilities:
 
-- bilingual sci-fi control-bridge interface
-- connection list with search and filters
-- add / edit / delete / interactive connect
-- task panel for:
-  - command preset selection
-  - custom command input
-  - connection testing
-  - structured result output
-  - recent task summary
+- left-side session library grouped by environment/customer/device role
+- quick connect row for name, protocol, host or URL, port, username, password, and group
+- double-click a session in the left library to open it
+- embedded terminal tabs for `SSH`, `Telnet`, and `Serial`
+- native launch for `RDP` and `Web`
+- right-side launchpad for terminal, SFTP files, launch command copy, SSH tunnel, edit, delete, and refresh
+- task panel for command presets, custom commands, connection testing, structured output, and recent task history
+
+After adding a profile, it appears immediately in the left Session Library. Select it and press `Terminal`, or double-click it. The storage path is shown in the bottom status bar.
 
 ## CLI
 
@@ -132,6 +134,18 @@ python -m win_connector add `
   --username admin `
   --group lab/linux `
   --tags linux,prod
+```
+
+Create a Web profile:
+
+```powershell
+python -m win_connector add `
+  --name "Router UI" `
+  --protocol web `
+  --url http://10.0.0.1 `
+  --username admin `
+  --password secret `
+  --group network/web
 ```
 
 Create a template-driven Cisco profile:
