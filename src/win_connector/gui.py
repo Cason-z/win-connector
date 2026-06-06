@@ -20,7 +20,7 @@ from win_connector.models import (
     TelnetConfig,
 )
 from win_connector.service import ConnectionService
-from win_connector.sessions import open_external_terminal
+from win_connector.sessions import open_external_terminal, start_gui_session_tab
 from win_connector.tasks import TaskService
 from win_connector.templates import TEMPLATE_PROTOCOL_MAP
 from win_connector.theme import PALETTE, apply_theme
@@ -233,6 +233,21 @@ class WinConnectorApp:
         self.add_group_button = ttk.Button(group_add, style="Icon.TButton", command=self.add_group)
         self.add_group_button.grid(row=0, column=1, sticky="e", padx=(8, 0))
 
+        self.sessions_title = ttk.Label(self.sidebar, style="Section.TLabel")
+        self.sessions_title.grid(row=10, column=0, sticky="w", pady=(24, 6))
+        self.session_list = tk.Listbox(
+            self.sidebar,
+            height=10,
+            bg=PALETTE["field"],
+            fg=PALETTE["text"],
+            selectbackground=PALETTE["selection"],
+            selectforeground=PALETTE["text"],
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=PALETTE["border"],
+        )
+        self.session_list.grid(row=11, column=0, sticky="nsew")
+
         main_panel = ttk.Frame(content, style="Panel.TFrame", padding=16)
         main_panel.grid(row=0, column=1, sticky="nsew")
         main_panel.columnconfigure(0, weight=1)
@@ -258,8 +273,12 @@ class WinConnectorApp:
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.tree.configure(yscrollcommand=scrollbar.set)
 
+        self.terminal_notebook = ttk.Notebook(main_panel)
+        self.terminal_notebook.grid(row=1, column=0, sticky="nsew", pady=(14, 0))
+        main_panel.rowconfigure(1, weight=1)
+
         self.task_frame = ttk.LabelFrame(main_panel, padding=14)
-        self.task_frame.grid(row=1, column=0, sticky="ew", pady=(14, 0))
+        self.task_frame.grid(row=2, column=0, sticky="ew", pady=(14, 0))
         self.task_frame.columnconfigure(1, weight=1)
         self.task_frame.columnconfigure(3, weight=1)
 
@@ -354,10 +373,10 @@ class WinConnectorApp:
         self.task_history_list.grid(row=8, column=0, columnspan=4, sticky="ew")
 
         self.empty_label = ttk.Label(main_panel, style="Empty.TLabel", textvariable=self.empty_var, anchor="center")
-        self.empty_label.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        self.empty_label.grid(row=3, column=0, sticky="ew", pady=(10, 0))
 
         self.button_bar = ttk.Frame(main_panel, style="Panel.TFrame")
-        self.button_bar.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+        self.button_bar.grid(row=4, column=0, sticky="ew", pady=(14, 0))
         self.add_button = ttk.Button(self.button_bar, style="Accent.TButton", command=self.add_connection)
         self.add_button.pack(side="left")
         self.edit_button = ttk.Button(self.button_bar, command=self.edit_connection)
@@ -384,6 +403,7 @@ class WinConnectorApp:
         self.tree.bind("<<TreeviewSelect>>", lambda _event: self._on_selected_profile_changed())
         self.task_preset_combo.bind("<<ComboboxSelected>>", lambda _event: self._apply_selected_preset())
         self.task_history_list.bind("<<ListboxSelect>>", lambda _event: self._show_selected_history())
+        self.session_list.bind("<Double-1>", lambda _event: self.open_terminal_tab())
 
     def _apply_text(self) -> None:
         self.root.title(self.title_override or self.i18n.t("app.title"))
@@ -411,6 +431,7 @@ class WinConnectorApp:
         self.group_label.configure(text=self.i18n.t("filters.group"))
         self.filter_summary.configure(text=self.i18n.t("filters.summary"))
         self.group_add_title.configure(text=self.i18n.t("groups.add_title"))
+        self.sessions_title.configure(text=self.i18n.t("sessions.title"))
         self.add_group_button.configure(text="+")
         self.add_button.configure(text=self.i18n.t("actions.add"))
         self.edit_button.configure(text=self.i18n.t("actions.edit"))
@@ -518,6 +539,10 @@ class WinConnectorApp:
                     ", ".join(profile.tags),
                 ),
             )
+
+        self.session_list.delete(0, "end")
+        for profile in profiles:
+            self.session_list.insert("end", f"{self.i18n.protocol_text(profile.protocol)}  {profile.name}  {self._profile_endpoint(profile)}")
 
         self.empty_var.set(self.i18n.t("messages.empty") if not profiles else "")
         self._update_status(len(profiles), len(self.all_profiles))
@@ -667,9 +692,16 @@ class WinConnectorApp:
 
     def selected_profile(self) -> ConnectionProfile | None:
         selection = self.tree.selection()
-        if not selection:
-            return None
-        return self.service.get_connection(selection[0])
+        if selection:
+            return self.service.get_connection(selection[0])
+        list_selection = self.session_list.curselection()
+        if list_selection:
+            profiles = self._filtered_profiles()
+            if list_selection[0] < len(profiles):
+                profile = profiles[list_selection[0]]
+                self.tree.selection_set(profile.id)
+                return profile
+        return None
 
     def _ssh_target(self, profile: ConnectionProfile) -> str:
         config = profile.protocol_config
@@ -731,11 +763,19 @@ class WinConnectorApp:
         return profile
 
     def open_terminal(self) -> None:
+        self.open_terminal_tab()
+
+    def open_terminal_tab(self) -> None:
         profile = self._selected_or_message()
         if profile is None:
             return
-        command = self._terminal_command(profile)
-        open_external_terminal(command, profile.name)
+        tab = ttk.Frame(self.terminal_notebook, style="Panel.TFrame")
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(0, weight=1)
+        title = f"{profile.name} [{profile.protocol.value}]"
+        self.terminal_notebook.add(tab, text=title)
+        self.terminal_notebook.select(tab)
+        start_gui_session_tab(profile, tab)
         self.action_status_var.set(self.i18n.t("actions.started", action=self.i18n.t("actions.terminal")))
 
     def open_files(self) -> None:

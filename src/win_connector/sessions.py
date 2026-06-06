@@ -271,6 +271,57 @@ def start_gui_session_window(profile: ConnectionProfile, root) -> ConnectResult:
     )
 
 
+def start_gui_session_tab(profile: ConnectionProfile, parent) -> ConnectResult:
+    import tkinter as tk
+    from tkinter import messagebox, ttk
+
+    text = tk.Text(parent, wrap="word", bg="#050b13", fg="#dff8ff", insertbackground="#22d3ee", relief="flat")
+    text.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+    entry = ttk.Entry(parent)
+    entry.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 8))
+
+    state = {"close": lambda: None}
+
+    def append_output(payload: str) -> None:
+        text.after(0, lambda: (text.insert("end", payload), text.see("end")))
+
+    try:
+        if profile.protocol == Protocol.SSH:
+            state["close"] = _start_gui_ssh(profile, append_output, entry)
+        elif profile.protocol == Protocol.TELNET:
+            state["close"] = _start_gui_telnet(profile, append_output, entry)
+        elif profile.protocol == Protocol.SERIAL:
+            state["close"] = _start_gui_serial(profile, append_output, entry)
+        elif profile.protocol == Protocol.RDP:
+            result = open_rdp_external(profile)
+            append_output(result.message + "\n")
+            return result
+        else:
+            raise RuntimeError(f"Unsupported protocol: {profile.protocol}")
+    except Exception as exc:
+        messagebox.showerror("Connection Error", str(exc))
+        raise
+
+    def submit(_event=None) -> None:
+        value = entry.get()
+        if not value:
+            return
+        sender = getattr(entry, "_session_sender", None)
+        if sender is not None:
+            sender(value + "\n")
+        entry.delete(0, "end")
+
+    entry.bind("<Return>", submit)
+    parent._session_close = state["close"]
+    return ConnectResult(
+        connection_id=profile.id,
+        protocol=profile.protocol,
+        mode="gui-tab",
+        message="Session tab opened",
+        command=[],
+    )
+
+
 def _start_gui_ssh(profile: ConnectionProfile, append_output, entry):
     paramiko = _require_paramiko()
     config = profile.protocol_config

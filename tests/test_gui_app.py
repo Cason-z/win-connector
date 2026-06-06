@@ -135,13 +135,23 @@ class WinConnectorAppQuickAddTests(unittest.TestCase):
 
         self.assertEqual(self.app.root.clipboard_get(), "ssh -p 2222 admin@10.0.0.5")
 
-    def test_open_terminal_launches_external_command(self) -> None:
+    def test_quick_add_populates_session_list_for_mobaxterm_flow(self) -> None:
+        self.app.quick_name_var.set("Jump Host")
+        self.app.quick_host_var.set("10.0.0.20")
+
+        self.app.quick_add_connection()
+
+        self.assertGreater(self.app.session_list.size(), 0)
+        self.assertIn("Jump Host", self.app.session_list.get(0))
+
+    def test_open_terminal_tab_embeds_session_in_workspace(self) -> None:
         self.create_ssh_profile()
 
-        with patch("win_connector.gui.open_external_terminal") as open_terminal:
-            self.app.open_terminal()
+        with patch("win_connector.gui.start_gui_session_tab") as start_tab:
+            self.app.open_terminal_tab()
 
-        open_terminal.assert_called_once_with(["ssh", "-p", "2222", "admin@10.0.0.5"], "Edge SSH")
+        self.assertGreaterEqual(len(self.app.terminal_notebook.tabs()), 1)
+        start_tab.assert_called_once()
 
 
 if __name__ == "__main__":
