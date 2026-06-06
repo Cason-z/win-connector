@@ -63,7 +63,7 @@ def apply_theme(root: tk.Misc) -> ttk.Style:
     style.map("TCheckbutton", foreground=[("active", PALETTE["text"])], background=[("active", PALETTE["panel"])])
     style.configure("TButton", padding=(14, 8), background=PALETTE["panel_alt"], foreground=PALETTE["text"], bordercolor=PALETTE["border"])
     style.map("TButton", background=[("active", PALETTE["selection"])], foreground=[("disabled", PALETTE["muted"])])
-    style.configure("Accent.TButton", background=PALETTE["accent"], foreground=PALETTE["text"], bordercolor=PALETTE["accent"])
+    style.configure("Accent.TButton", padding=(16, 9), background=PALETTE["accent"], foreground=PALETTE["bg"], bordercolor=PALETTE["accent"], font=("Segoe UI Semibold", 10, "bold"))
     style.map("Accent.TButton", background=[("active", PALETTE["accent_hover"])])
     style.configure("Icon.TButton", padding=(10, 6), background=PALETTE["panel_alt"], foreground=PALETTE["accent"], bordercolor=PALETTE["border"], font=("Segoe UI Semibold", 11, "bold"))
     style.map("Icon.TButton", background=[("active", PALETTE["selection"])], foreground=[("active", PALETTE["accent_hover"])])

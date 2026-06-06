@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -19,6 +20,7 @@ from win_connector.models import (
     TelnetConfig,
 )
 from win_connector.service import ConnectionService
+from win_connector.sessions import open_external_terminal
 from win_connector.tasks import TaskService
 from win_connector.templates import TEMPLATE_PROTOCOL_MAP
 from win_connector.theme import PALETTE, apply_theme
@@ -63,6 +65,10 @@ class WinConnectorApp:
         self.quick_tags_var = tk.StringVar()
         self.quick_show_password_var = tk.BooleanVar(value=False)
         self.new_group_var = tk.StringVar()
+        self.service_local_port_var = tk.StringVar(value="8080")
+        self.service_remote_host_var = tk.StringVar(value="127.0.0.1")
+        self.service_remote_port_var = tk.StringVar(value="80")
+        self.action_status_var = tk.StringVar()
         self.motion_phase = 0
 
         self.all_profiles: list[ConnectionProfile] = []
@@ -262,27 +268,62 @@ class WinConnectorApp:
         self.task_target_value = ttk.Label(self.task_frame, textvariable=self.task_target_var, style="Muted.TLabel")
         self.task_target_value.grid(row=0, column=1, columnspan=3, sticky="w", padx=(8, 0))
 
+        self.actions_title_label = ttk.Label(self.task_frame, style="Section.TLabel")
+        self.actions_title_label.grid(row=1, column=0, sticky="w", pady=(14, 6))
+        actions = ttk.Frame(self.task_frame, style="Panel.TFrame")
+        actions.grid(row=1, column=1, columnspan=3, sticky="ew", padx=(8, 0), pady=(14, 6))
+        actions.columnconfigure(4, weight=1)
+        self.open_terminal_button = ttk.Button(actions, style="Accent.TButton", command=self.open_terminal)
+        self.open_terminal_button.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.open_files_button = ttk.Button(actions, command=self.open_files)
+        self.open_files_button.grid(row=0, column=1, sticky="w", padx=(0, 8))
+        self.copy_command_button = ttk.Button(actions, command=self.copy_launch_command)
+        self.copy_command_button.grid(row=0, column=2, sticky="w", padx=(0, 8))
+        self.action_status_label = ttk.Label(actions, textvariable=self.action_status_var, style="Muted.TLabel")
+        self.action_status_label.grid(row=0, column=4, sticky="w")
+
+        self.service_title_label = ttk.Label(self.task_frame, style="Section.TLabel")
+        self.service_title_label.grid(row=2, column=0, sticky="w", pady=(8, 6))
+        service_row = ttk.Frame(self.task_frame, style="Panel.TFrame")
+        service_row.grid(row=2, column=1, columnspan=3, sticky="ew", padx=(8, 0), pady=(8, 6))
+        service_row.columnconfigure(1, weight=1)
+        service_row.columnconfigure(3, weight=1)
+        self.service_local_port_label = ttk.Label(service_row)
+        self.service_local_port_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.service_local_port_entry = ttk.Entry(service_row, textvariable=self.service_local_port_var, width=8)
+        self.service_local_port_entry.grid(row=0, column=1, sticky="w", padx=(0, 12))
+        self.service_remote_host_label = ttk.Label(service_row)
+        self.service_remote_host_label.grid(row=0, column=2, sticky="w", padx=(0, 8))
+        self.service_remote_host_entry = ttk.Entry(service_row, textvariable=self.service_remote_host_var)
+        self.service_remote_host_entry.grid(row=0, column=3, sticky="ew", padx=(0, 12))
+        self.service_remote_port_label = ttk.Label(service_row)
+        self.service_remote_port_label.grid(row=0, column=4, sticky="w", padx=(0, 8))
+        self.service_remote_port_entry = ttk.Entry(service_row, textvariable=self.service_remote_port_var, width=8)
+        self.service_remote_port_entry.grid(row=0, column=5, sticky="w", padx=(0, 12))
+        self.start_tunnel_button = ttk.Button(service_row, command=self.start_tunnel)
+        self.start_tunnel_button.grid(row=0, column=6, sticky="e")
+
         self.task_preset_label = ttk.Label(self.task_frame)
-        self.task_preset_label.grid(row=1, column=0, sticky="w", pady=(12, 6))
+        self.task_preset_label.grid(row=3, column=0, sticky="w", pady=(12, 6))
         self.task_preset_combo = ttk.Combobox(self.task_frame, state="readonly", textvariable=self.task_preset_var)
-        self.task_preset_combo.grid(row=1, column=1, sticky="ew", padx=(8, 12), pady=(12, 6))
+        self.task_preset_combo.grid(row=3, column=1, sticky="ew", padx=(8, 12), pady=(12, 6))
 
         self.task_timeout_label = ttk.Label(self.task_frame)
-        self.task_timeout_label.grid(row=1, column=2, sticky="e", pady=(12, 6))
+        self.task_timeout_label.grid(row=3, column=2, sticky="e", pady=(12, 6))
         self.task_timeout_entry = ttk.Entry(self.task_frame, textvariable=self.task_timeout_var, width=10)
-        self.task_timeout_entry.grid(row=1, column=3, sticky="w", padx=(8, 0), pady=(12, 6))
+        self.task_timeout_entry.grid(row=3, column=3, sticky="w", padx=(8, 0), pady=(12, 6))
 
         self.task_command_label = ttk.Label(self.task_frame)
-        self.task_command_label.grid(row=2, column=0, sticky="w", pady=(6, 6))
+        self.task_command_label.grid(row=4, column=0, sticky="w", pady=(6, 6))
         self.task_command_entry = ttk.Entry(self.task_frame, textvariable=self.task_command_var)
-        self.task_command_entry.grid(row=2, column=1, columnspan=3, sticky="ew", padx=(8, 0), pady=(6, 6))
+        self.task_command_entry.grid(row=4, column=1, columnspan=3, sticky="ew", padx=(8, 0), pady=(6, 6))
 
         self.task_execute_button = ttk.Button(self.task_frame, style="Accent.TButton", command=self.execute_task)
-        self.task_execute_button.grid(row=3, column=3, sticky="e", pady=(8, 8))
+        self.task_execute_button.grid(row=5, column=3, sticky="e", pady=(8, 8))
         self.task_test_button = ttk.Button(self.task_frame, command=self.test_connection)
-        self.task_test_button.grid(row=3, column=2, sticky="e", padx=(0, 8), pady=(8, 8))
+        self.task_test_button.grid(row=5, column=2, sticky="e", padx=(0, 8), pady=(8, 8))
         self.task_summary_label = ttk.Label(self.task_frame, textvariable=self.task_summary_var, style="Muted.TLabel")
-        self.task_summary_label.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 8))
+        self.task_summary_label.grid(row=5, column=0, columnspan=2, sticky="w", pady=(8, 8))
 
         self.task_output = tk.Text(
             self.task_frame,
@@ -295,10 +336,10 @@ class WinConnectorApp:
             relief="flat",
             wrap="word",
         )
-        self.task_output.grid(row=4, column=0, columnspan=4, sticky="ew", pady=(0, 10))
+        self.task_output.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(0, 10))
 
         self.task_history_label = ttk.Label(self.task_frame, style="Section.TLabel")
-        self.task_history_label.grid(row=5, column=0, sticky="w", pady=(0, 6))
+        self.task_history_label.grid(row=7, column=0, sticky="w", pady=(0, 6))
         self.task_history_list = tk.Listbox(
             self.task_frame,
             height=5,
@@ -310,7 +351,7 @@ class WinConnectorApp:
             highlightthickness=1,
             highlightbackground=PALETTE["border"],
         )
-        self.task_history_list.grid(row=6, column=0, columnspan=4, sticky="ew")
+        self.task_history_list.grid(row=8, column=0, columnspan=4, sticky="ew")
 
         self.empty_label = ttk.Label(main_panel, style="Empty.TLabel", textvariable=self.empty_var, anchor="center")
         self.empty_label.grid(row=2, column=0, sticky="ew", pady=(10, 0))
@@ -378,6 +419,15 @@ class WinConnectorApp:
         self.refresh_button.configure(text=self.i18n.t("actions.refresh"))
         self.task_frame.configure(text=self.i18n.t("tasks.panel"))
         self.task_target_label.configure(text=self.i18n.t("tasks.target"))
+        self.actions_title_label.configure(text=self.i18n.t("actions.panel"))
+        self.open_terminal_button.configure(text=self.i18n.t("actions.terminal"))
+        self.open_files_button.configure(text=self.i18n.t("actions.files"))
+        self.copy_command_button.configure(text=self.i18n.t("actions.copy_command"))
+        self.service_title_label.configure(text=self.i18n.t("service.panel"))
+        self.service_local_port_label.configure(text=self.i18n.t("service.local_port"))
+        self.service_remote_host_label.configure(text=self.i18n.t("service.remote_host"))
+        self.service_remote_port_label.configure(text=self.i18n.t("service.remote_port"))
+        self.start_tunnel_button.configure(text=self.i18n.t("service.start_tunnel"))
         self.task_preset_label.configure(text=self.i18n.t("tasks.preset"))
         self.task_timeout_label.configure(text=self.i18n.t("tasks.timeout"))
         self.task_command_label.configure(text=self.i18n.t("tasks.command"))
@@ -620,6 +670,104 @@ class WinConnectorApp:
         if not selection:
             return None
         return self.service.get_connection(selection[0])
+
+    def _ssh_target(self, profile: ConnectionProfile) -> str:
+        config = profile.protocol_config
+        username = getattr(config, "username", "")
+        host = getattr(config, "host", "")
+        return f"{username}@{host}" if username else host
+
+    def _terminal_command(self, profile: ConnectionProfile) -> list[str]:
+        config = profile.protocol_config
+        if profile.protocol == Protocol.SSH:
+            assert isinstance(config, SSHConfig)
+            command = ["ssh", "-p", str(config.port)]
+            if config.private_key_path:
+                command.extend(["-i", config.private_key_path])
+            command.append(self._ssh_target(profile))
+            return command
+        if profile.protocol == Protocol.RDP:
+            assert isinstance(config, RDPConfig)
+            host_spec = config.host if config.port == 3389 else f"{config.host}:{config.port}"
+            return ["mstsc", "/v:" + host_spec]
+        if profile.protocol == Protocol.TELNET:
+            assert isinstance(config, TelnetConfig)
+            return ["telnet", config.host, str(config.port)]
+        if profile.protocol == Protocol.SERIAL:
+            assert isinstance(config, SerialConfig)
+            return ["mode", config.port_name]
+        raise RuntimeError(f"Unsupported protocol: {profile.protocol}")
+
+    def _files_command(self, profile: ConnectionProfile) -> list[str]:
+        config = profile.protocol_config
+        if profile.protocol != Protocol.SSH:
+            raise RuntimeError("File browser is available for SSH profiles through SFTP.")
+        assert isinstance(config, SSHConfig)
+        command = ["sftp", "-P", str(config.port)]
+        if config.private_key_path:
+            command.extend(["-i", config.private_key_path])
+        command.append(self._ssh_target(profile))
+        return command
+
+    def _tunnel_command(self, profile: ConnectionProfile) -> list[str]:
+        config = profile.protocol_config
+        if profile.protocol != Protocol.SSH:
+            raise RuntimeError("Service tunnels require an SSH profile.")
+        assert isinstance(config, SSHConfig)
+        local_port = int(self.service_local_port_var.get() or "8080")
+        remote_host = self.service_remote_host_var.get().strip() or "127.0.0.1"
+        remote_port = int(self.service_remote_port_var.get() or "80")
+        command = ["ssh", "-N", "-L", f"{local_port}:{remote_host}:{remote_port}", "-p", str(config.port)]
+        if config.private_key_path:
+            command.extend(["-i", config.private_key_path])
+        command.append(self._ssh_target(profile))
+        return command
+
+    def _selected_or_message(self) -> ConnectionProfile | None:
+        profile = self.selected_profile()
+        if profile is None:
+            messagebox.showinfo(self.i18n.t("messages.select_title"), self.i18n.t("messages.select_body"))
+            return None
+        return profile
+
+    def open_terminal(self) -> None:
+        profile = self._selected_or_message()
+        if profile is None:
+            return
+        command = self._terminal_command(profile)
+        open_external_terminal(command, profile.name)
+        self.action_status_var.set(self.i18n.t("actions.started", action=self.i18n.t("actions.terminal")))
+
+    def open_files(self) -> None:
+        profile = self._selected_or_message()
+        if profile is None:
+            return
+        try:
+            command = self._files_command(profile)
+            open_external_terminal(command, f"{profile.name} SFTP")
+            self.action_status_var.set(self.i18n.t("actions.started", action=self.i18n.t("actions.files")))
+        except Exception as exc:
+            messagebox.showerror(self.i18n.t("messages.connect_error"), str(exc), parent=self.root)
+
+    def copy_launch_command(self) -> None:
+        profile = self._selected_or_message()
+        if profile is None:
+            return
+        command = subprocess.list2cmdline(self._terminal_command(profile))
+        self.root.clipboard_clear()
+        self.root.clipboard_append(command)
+        self.action_status_var.set(self.i18n.t("actions.copied"))
+
+    def start_tunnel(self) -> None:
+        profile = self._selected_or_message()
+        if profile is None:
+            return
+        try:
+            command = self._tunnel_command(profile)
+            open_external_terminal(command, f"{profile.name} Tunnel")
+            self.action_status_var.set(self.i18n.t("actions.started", action=self.i18n.t("service.start_tunnel")))
+        except Exception as exc:
+            messagebox.showerror(self.i18n.t("messages.connect_error"), str(exc), parent=self.root)
 
     def _on_selected_profile_changed(self) -> None:
         profile = self.selected_profile()

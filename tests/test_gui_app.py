@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import sys
 import tkinter as tk
@@ -8,6 +9,7 @@ import tkinter as tk
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from win_connector.gui import WinConnectorApp
+from win_connector.models import ConnectionCreateRequest, DeviceTemplate, Protocol, SSHConfig
 from win_connector.service import ConnectionService
 from win_connector.storage import JSONStorage
 
@@ -74,6 +76,72 @@ class WinConnectorAppQuickAddTests(unittest.TestCase):
 
         self.assertEqual(self.app.quick_group_var.get(), "lab/core")
         self.assertIn("lab/core", self.app.group_combo.cget("values"))
+
+    def create_ssh_profile(self):
+        profile = self.app.service.create_connection(
+            ConnectionCreateRequest(
+                name="Edge SSH",
+                protocol=Protocol.SSH,
+                group="edge",
+                tags=[],
+                notes="",
+                device_template=DeviceTemplate.LINUX,
+                protocol_config=SSHConfig(host="10.0.0.5", port=2222, username="admin"),
+            )
+        )
+        self.app.refresh()
+        self.app.tree.selection_set(profile.id)
+        return profile
+
+    def test_actions_panel_exposes_xpipe_like_workflows(self) -> None:
+        required = [
+            "open_terminal_button",
+            "open_files_button",
+            "copy_command_button",
+            "start_tunnel_button",
+            "service_local_port_var",
+            "service_remote_host_var",
+            "service_remote_port_var",
+        ]
+
+        for attribute in required:
+            with self.subTest(attribute=attribute):
+                self.assertTrue(hasattr(self.app, attribute))
+
+    def test_builds_terminal_file_and_tunnel_commands_for_ssh(self) -> None:
+        profile = self.create_ssh_profile()
+
+        self.app.service_local_port_var.set("8080")
+        self.app.service_remote_host_var.set("127.0.0.1")
+        self.app.service_remote_port_var.set("80")
+
+        self.assertEqual(
+            self.app._terminal_command(profile),
+            ["ssh", "-p", "2222", "admin@10.0.0.5"],
+        )
+        self.assertEqual(
+            self.app._files_command(profile),
+            ["sftp", "-P", "2222", "admin@10.0.0.5"],
+        )
+        self.assertEqual(
+            self.app._tunnel_command(profile),
+            ["ssh", "-N", "-L", "8080:127.0.0.1:80", "-p", "2222", "admin@10.0.0.5"],
+        )
+
+    def test_copy_command_places_terminal_command_on_clipboard(self) -> None:
+        self.create_ssh_profile()
+
+        self.app.copy_launch_command()
+
+        self.assertEqual(self.app.root.clipboard_get(), "ssh -p 2222 admin@10.0.0.5")
+
+    def test_open_terminal_launches_external_command(self) -> None:
+        self.create_ssh_profile()
+
+        with patch("win_connector.gui.open_external_terminal") as open_terminal:
+            self.app.open_terminal()
+
+        open_terminal.assert_called_once_with(["ssh", "-p", "2222", "admin@10.0.0.5"], "Edge SSH")
 
 
 if __name__ == "__main__":
